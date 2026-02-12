@@ -7,13 +7,17 @@ import { ResearcherAccount, ResearcherProfile } from '@/types';
 
 const platform = () => getPlatformClient();
 
+// Key prefix for environment isolation (staging vs production sharing same Redis)
+const PREFIX = process.env.PLATFORM_KEY_PREFIX || '';
+const key = (k: string) => PREFIX ? `${PREFIX}:${k}` : k;
+
 // ============================================
 // Researcher Account CRUD
 // ============================================
 
 export async function getResearcherById(id: string): Promise<ResearcherAccount | null> {
   try {
-    return await platform().get<ResearcherAccount>(`researcher:${id}`);
+    return await platform().get<ResearcherAccount>(`${key('researcher')}:${id}`);
   } catch (error) {
     console.error('Error getting researcher:', error);
     return null;
@@ -25,7 +29,7 @@ export async function getResearcherByOAuth(
   oauthId: string
 ): Promise<ResearcherAccount | null> {
   try {
-    const researcherId = await platform().get<string>(`oauth:${provider}:${oauthId}`);
+    const researcherId = await platform().get<string>(`${key('oauth')}:${provider}:${oauthId}`);
     if (!researcherId) return null;
     return getResearcherById(researcherId);
   } catch (error) {
@@ -36,7 +40,7 @@ export async function getResearcherByOAuth(
 
 export async function getResearcherByEmail(email: string): Promise<ResearcherAccount | null> {
   try {
-    const researcherId = await platform().get<string>(`email:${email}`);
+    const researcherId = await platform().get<string>(`${key('email')}:${email}`);
     if (!researcherId) return null;
     return getResearcherById(researcherId);
   } catch (error) {
@@ -48,10 +52,10 @@ export async function getResearcherByEmail(email: string): Promise<ResearcherAcc
 export async function saveResearcher(researcher: ResearcherAccount): Promise<boolean> {
   try {
     const p = platform();
-    await p.set(`researcher:${researcher.id}`, researcher);
-    await p.set(`oauth:${researcher.oauthProvider}:${researcher.oauthId}`, researcher.id);
-    await p.set(`email:${researcher.email}`, researcher.id);
-    await p.sadd('all-researchers', researcher.id);
+    await p.set(`${key('researcher')}:${researcher.id}`, researcher);
+    await p.set(`${key('oauth')}:${researcher.oauthProvider}:${researcher.oauthId}`, researcher.id);
+    await p.set(`${key('email')}:${researcher.email}`, researcher.id);
+    await p.sadd(key('all-researchers'), researcher.id);
     return true;
   } catch (error) {
     console.error('Error saving researcher:', error);
@@ -68,7 +72,7 @@ export async function updateResearcher(
     if (!researcher) return false;
 
     const updated = { ...researcher, ...updates, id: researcher.id };
-    await platform().set(`researcher:${id}`, updated);
+    await platform().set(`${key('researcher')}:${id}`, updated);
     return true;
   } catch (error) {
     console.error('Error updating researcher:', error);
@@ -85,7 +89,7 @@ export async function registerStudyOwnership(
   researcherId: string
 ): Promise<boolean> {
   try {
-    await platform().set(`study-owner:${studyId}`, researcherId);
+    await platform().set(`${key('study-owner')}:${studyId}`, researcherId);
     return true;
   } catch (error) {
     console.error('Error registering study ownership:', error);
@@ -95,7 +99,7 @@ export async function registerStudyOwnership(
 
 export async function getStudyOwner(studyId: string): Promise<string | null> {
   try {
-    return await platform().get<string>(`study-owner:${studyId}`);
+    return await platform().get<string>(`${key('study-owner')}:${studyId}`);
   } catch (error) {
     console.error('Error getting study owner:', error);
     return null;
@@ -104,7 +108,7 @@ export async function getStudyOwner(studyId: string): Promise<string | null> {
 
 export async function deleteStudyOwnership(studyId: string): Promise<boolean> {
   try {
-    await platform().del(`study-owner:${studyId}`);
+    await platform().del(`${key('study-owner')}:${studyId}`);
     return true;
   } catch (error) {
     console.error('Error deleting study ownership:', error);

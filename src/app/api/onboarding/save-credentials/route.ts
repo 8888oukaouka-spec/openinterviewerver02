@@ -8,6 +8,7 @@ import { getRequestContext } from '@/lib/researcherContext';
 import { updateResearcher } from '@/lib/platformDb';
 import { encrypt } from '@/lib/crypto';
 import { isHostedMode } from '@/lib/mode';
+import { isValidUpstashUrl } from '@/lib/kvClient';
 
 export async function POST(request: Request) {
   if (!isHostedMode()) {
@@ -32,6 +33,12 @@ export async function POST(request: Request) {
     const updates: Record<string, string | number | null> = {};
 
     if (redisUrl && redisToken) {
+      if (!isValidUpstashUrl(redisUrl)) {
+        return NextResponse.json(
+          { error: 'Only Upstash Redis URLs (https://*.upstash.io) are supported.' },
+          { status: 400 }
+        );
+      }
       updates.encryptedRedisUrl = encrypt(redisUrl);
       updates.encryptedRedisToken = encrypt(redisToken);
       updates.redisConfiguredAt = Date.now();

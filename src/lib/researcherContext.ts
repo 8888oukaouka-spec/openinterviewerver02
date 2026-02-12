@@ -189,8 +189,10 @@ export async function getParticipantRequestContext(
         if (study && study.config.linksEnabled === false) {
           return { valid: false, context: null, error: 'Participant links have been disabled for this study.' };
         }
-      } catch {
-        // If study lookup fails, allow the request — the study may not exist in KV
+      } catch (kvError) {
+        // Fail closed: if we can't verify link status, deny access
+        console.error('Failed to check link status for study:', auth.studyId, kvError);
+        return { valid: false, context: null, error: 'Unable to verify study status. Please try again later.' };
       }
     }
 

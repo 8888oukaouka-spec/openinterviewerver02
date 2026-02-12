@@ -1,5 +1,6 @@
-// POST /api/generate-link - Generate participant link with encrypted token
+// POST /api/generate-link - Generate participant link with signed JWT token
 // Creates a stateless URL that embeds the study configuration
+// Note: Token is signed (integrity) not encrypted — payload is base64-visible to anyone with the URL
 // Requires admin authentication to prevent unauthorized link generation
 
 export const dynamic = 'force-dynamic';

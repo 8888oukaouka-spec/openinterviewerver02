@@ -5,6 +5,7 @@ import { AIProvider } from '../ai';
 import { GeminiProvider } from './gemini';
 import { ClaudeProvider } from './claude';
 import { StudyConfig } from '@/types';
+import { isHostedMode } from '../mode';
 
 export type ProviderType = 'gemini' | 'claude';
 
@@ -28,12 +29,20 @@ export function getInterviewProvider(studyConfig?: StudyConfig, keys?: AIProvide
   // Pass model from studyConfig (if set) to provider constructor
   const model = studyConfig?.aiModel;
 
+  // In hosted mode, use ONLY researcher-provided keys (no env var fallback)
+  // Pass a special sentinel ('') to prevent providers from falling back to env vars
+  const hosted = isHostedMode();
+
   switch (providerType) {
-    case 'claude':
-      return new ClaudeProvider(model, keys?.anthropicApiKey);
+    case 'claude': {
+      const key = hosted ? (keys?.anthropicApiKey || '') : (keys?.anthropicApiKey ?? undefined);
+      return new ClaudeProvider(model, key);
+    }
     case 'gemini':
-    default:
-      return new GeminiProvider(model, keys?.geminiApiKey);
+    default: {
+      const key = hosted ? (keys?.geminiApiKey || '') : (keys?.geminiApiKey ?? undefined);
+      return new GeminiProvider(model, key);
+    }
   }
 }
 

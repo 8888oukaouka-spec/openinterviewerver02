@@ -28,11 +28,15 @@ export async function POST(request: Request) {
 
     if (provider === 'gemini') {
       // Test Gemini key with a minimal request
+      // Use header-based auth (x-goog-api-key) to avoid leaking the key in URL query strings
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey,
+          },
           body: JSON.stringify({
             contents: [{ parts: [{ text: 'Say hello in one word.' }] }],
             generationConfig: { maxOutputTokens: 10 },

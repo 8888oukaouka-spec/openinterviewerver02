@@ -37,7 +37,9 @@ export class ClaudeProvider implements AIProvider {
   private model: string;
 
   constructor(model?: string, apiKey?: string | null) {
-    const key = apiKey || process.env.ANTHROPIC_API_KEY;
+    // Only fall back to env var when apiKey is undefined (not explicitly provided)
+    // In hosted mode, an empty string is passed to prevent env var fallback
+    const key = apiKey !== undefined ? (apiKey || undefined) : process.env.ANTHROPIC_API_KEY;
     if (!key) {
       throw new Error('ANTHROPIC_API_KEY is required for Claude provider');
     }

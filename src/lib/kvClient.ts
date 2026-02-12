@@ -6,6 +6,19 @@ import { Redis } from '@upstash/redis';
 import { createHash } from 'crypto';
 import { isStandaloneMode } from './mode';
 
+// Only allow Upstash Redis URLs to prevent SSRF against internal services
+export function isValidUpstashUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.protocol === 'https:' &&
+      parsed.hostname.endsWith('.upstash.io')
+    );
+  } catch {
+    return false;
+  }
+}
+
 // Cache researcher clients keyed by Redis URL to avoid re-creation
 const clientCache = new Map<string, { client: Redis; lastUsed: number }>();
 const CLIENT_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
@@ -43,6 +56,11 @@ export function getPlatformClient(): Redis {
 // Dynamic client for a researcher's own Redis
 // Cache key includes token hash so credential rotation creates a new client
 export function getResearcherClient(redisUrl: string, redisToken: string): Redis {
+  // Validate URL to prevent SSRF
+  if (!isValidUpstashUrl(redisUrl)) {
+    throw new Error('Invalid Redis URL: only Upstash Redis URLs (https://*.upstash.io) are supported');
+  }
+
   const tokenHash = createHash('sha256').update(redisToken).digest('hex').slice(0, 16);
   const cacheKey = `${redisUrl}:${tokenHash}`;
   const cached = clientCache.get(cacheKey);
