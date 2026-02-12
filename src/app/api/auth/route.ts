@@ -1,19 +1,30 @@
 // POST /api/auth - Researcher login
 // Uses signed JWT session tokens for security
+// In hosted mode, password login is disabled (use OAuth instead)
 
 export const dynamic = 'force-dynamic';
 
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+import { timingSafeEqual } from 'crypto';
 import {
   createSessionToken,
   verifySessionToken,
   getSessionCookieOptions,
   SESSION_COOKIE_NAME
 } from '@/lib/auth';
+import { isHostedMode } from '@/lib/mode';
 
 export async function POST(request: Request) {
   try {
+    // In hosted mode, password login is disabled — use OAuth
+    if (isHostedMode()) {
+      return NextResponse.json(
+        { error: 'Password login is not available in hosted mode. Use OAuth to sign in.' },
+        { status: 404 }
+      );
+    }
+
     const body = await request.json();
     const { password } = body as { password: string };
 
@@ -37,15 +48,17 @@ export async function POST(request: Request) {
       );
     }
 
-    // Check password
-    if (password !== adminPassword) {
+    // Check password (constant-time comparison to prevent timing attacks)
+    const passwordBuf = Buffer.from(password);
+    const adminBuf = Buffer.from(adminPassword);
+    if (passwordBuf.length !== adminBuf.length || !timingSafeEqual(passwordBuf, adminBuf)) {
       return NextResponse.json(
         { error: 'Invalid password' },
         { status: 401 }
       );
     }
 
-    // Create signed session token
+    // Create signed session token (no researcherId in standalone mode)
     const sessionToken = await createSessionToken();
 
     // Set auth cookie with signed token
@@ -73,10 +86,13 @@ export async function GET() {
     }
 
     // Verify the token is valid (not just that it exists)
-    const isValid = await verifySessionToken(authCookie.value);
+    const session = await verifySessionToken(authCookie.value);
 
-    return NextResponse.json({ authenticated: isValid });
-  } catch (error) {
+    return NextResponse.json({
+      authenticated: session.valid,
+      ...(session.researcherId && { researcherId: session.researcherId }),
+    });
+  } catch {
     return NextResponse.json({ authenticated: false });
   }
 }
@@ -87,7 +103,7 @@ export async function DELETE() {
     const cookieStore = await cookies();
     cookieStore.delete(SESSION_COOKIE_NAME);
     return NextResponse.json({ success: true });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: 'Logout failed' },
       { status: 500 }

@@ -206,6 +206,43 @@ export interface ParticipantToken {
   studyConfig: StudyConfig;
   createdAt: number;
   expiresAt?: number;
+  researcherId?: string;  // Present in hosted mode for researcher context resolution
+}
+
+// ============================================
+// Researcher Account (Platform DB - Hosted Mode)
+// ============================================
+
+export interface ResearcherAccount {
+  id: string;
+  email: string;
+  name: string;
+  avatarUrl: string | null;
+  oauthProvider: 'google' | 'github';
+  oauthId: string;
+  createdAt: number;
+  lastLoginAt: number;
+  onboardingComplete: boolean;
+
+  // Encrypted credentials — never sent to client
+  encryptedRedisUrl: string | null;
+  encryptedRedisToken: string | null;
+  encryptedGeminiApiKey: string | null;
+  encryptedAnthropicApiKey: string | null;
+
+  redisConfiguredAt: number | null;
+}
+
+// Safe subset for client-side display
+export interface ResearcherProfile {
+  id: string;
+  email: string;
+  name: string;
+  avatarUrl: string | null;
+  onboardingComplete: boolean;
+  hasRedisConfigured: boolean;
+  hasGeminiKey: boolean;
+  hasAnthropicKey: boolean;
 }
 
 // ============================================

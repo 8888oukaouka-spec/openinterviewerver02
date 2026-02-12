@@ -1,16 +1,12 @@
 // Session token utilities for researcher authentication
 // Uses signed JWTs to prevent forgery
+// Supports both standalone (password) and hosted (OAuth with researcherId) modes
 
 import * as jose from 'jose';
+import { isHostedMode } from './mode';
 
 const SESSION_COOKIE_NAME = 'research-auth';
 const SESSION_DURATION = 60 * 60 * 24 * 7; // 7 days in seconds
-
-interface SessionPayload {
-  type: 'session';
-  iat: number;
-  exp: number;
-}
 
 // Get the signing secret from environment
 // Uses SESSION_SECRET if available, falls back to ADMIN_PASSWORD
@@ -32,10 +28,17 @@ function getSecret(): Uint8Array {
 }
 
 // Create a signed session token
-export async function createSessionToken(): Promise<string> {
+// In hosted mode, embeds researcherId for multi-tenant context resolution
+export async function createSessionToken(researcherId?: string): Promise<string> {
   const secret = getSecret();
 
-  const token = await new jose.SignJWT({ type: 'session' })
+  const payload: Record<string, unknown> = { type: 'session' };
+  if (isHostedMode() && researcherId) {
+    payload.mode = 'hosted';
+    payload.researcherId = researcherId;
+  }
+
+  const token = await new jose.SignJWT(payload)
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime(`${SESSION_DURATION}s`)
@@ -44,10 +47,17 @@ export async function createSessionToken(): Promise<string> {
   return token;
 }
 
-// Verify a session token - returns true if valid
-export async function verifySessionToken(token: string): Promise<boolean> {
+// Session verification result
+export interface SessionVerifyResult {
+  valid: boolean;
+  researcherId?: string; // Present in hosted mode
+}
+
+// Verify a session token
+// Returns validity and researcherId (hosted mode only)
+export async function verifySessionToken(token: string): Promise<SessionVerifyResult> {
   if (!token) {
-    return false;
+    return { valid: false };
   }
 
   try {
@@ -56,13 +66,21 @@ export async function verifySessionToken(token: string): Promise<boolean> {
 
     // Check that it's a session token (not a participant token)
     if (payload.type !== 'session') {
-      return false;
+      return { valid: false };
     }
 
-    return true;
-  } catch (error) {
+    // In hosted mode, extract researcherId
+    if (isHostedMode()) {
+      if (!payload.researcherId) {
+        return { valid: false };
+      }
+      return { valid: true, researcherId: payload.researcherId as string };
+    }
+
+    return { valid: true };
+  } catch {
     // Token invalid, expired, or tampered with
-    return false;
+    return { valid: false };
   }
 }
 
@@ -85,6 +103,15 @@ export { SESSION_COOKIE_NAME };
 function getParticipantSecret(): Uint8Array | null {
   const secret = process.env.PARTICIPANT_TOKEN_SECRET || process.env.ADMIN_PASSWORD;
   if (!secret) return null;
+
+  // Warn if using ADMIN_PASSWORD as participant token secret (less secure)
+  if (!process.env.PARTICIPANT_TOKEN_SECRET && process.env.NODE_ENV === 'production') {
+    console.warn(
+      '[Security] PARTICIPANT_TOKEN_SECRET not set - falling back to ADMIN_PASSWORD. ' +
+      'For better security, set a dedicated PARTICIPANT_TOKEN_SECRET environment variable.'
+    );
+  }
+
   return new TextEncoder().encode(secret);
 }
 
@@ -107,14 +134,24 @@ function getCookieValue(request: Request, name: string): string | null {
 async function hasValidAdminSession(request: Request): Promise<boolean> {
   const sessionToken = getCookieValue(request, SESSION_COOKIE_NAME);
   if (!sessionToken) return false;
-  return verifySessionToken(sessionToken);
+  const result = await verifySessionToken(sessionToken);
+  return result.valid;
+}
+
+// Participant token verification result
+export interface ParticipantVerifyResult {
+  valid: boolean;
+  studyId?: string;
+  researcherId?: string; // Present in hosted mode tokens
+  isAdmin?: boolean;
+  error?: string;
 }
 
 // Verify participant token from Authorization header
 // Also accepts valid admin session cookies (for researcher preview)
 // Returns studyId if from participant token, undefined if from admin session
 // Checks if links are enabled for the study (unless admin)
-export async function verifyParticipantToken(request: Request): Promise<{ valid: boolean; studyId?: string; isAdmin?: boolean; error?: string }> {
+export async function verifyParticipantToken(request: Request): Promise<ParticipantVerifyResult> {
   // First, check for participant token in Authorization header
   const authHeader = request.headers.get('Authorization');
   const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
@@ -124,18 +161,19 @@ export async function verifyParticipantToken(request: Request): Promise<{ valid:
     if (secret) {
       try {
         const { payload } = await jose.jwtVerify(token, secret);
-        const studyId = payload.studyId as string;
 
-        // Check if links are enabled for this study
-        // Import dynamically to avoid circular dependencies
-        const { getStudy } = await import('@/services/storageService');
-        const study = await getStudy(studyId);
+        // Reject session tokens used as participant tokens (token-type confusion)
+        if (payload.type === 'session') {
+          // Fall through to admin session check
+        } else {
+          const studyId = payload.studyId as string;
+          const researcherId = payload.researcherId as string | undefined;
 
-        if (study && study.config.linksEnabled === false) {
-          return { valid: false, error: 'Participant links have been disabled for this study.' };
+          // Note: "links disabled" check moved to getParticipantRequestContext()
+          // where the correct per-researcher KV client is available
+
+          return { valid: true, studyId, researcherId };
         }
-
-        return { valid: true, studyId };
       } catch (error) {
         // Check if it's an expiration error
         if (error instanceof jose.errors.JWTExpired) {

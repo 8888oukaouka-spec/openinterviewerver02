@@ -4,16 +4,16 @@
 
 import { NextResponse } from 'next/server';
 import { saveInterview, isKVAvailable, incrementStudyInterviewCount, lockStudy } from '@/lib/kv';
-import { verifyParticipantToken } from '@/lib/auth';
+import { getParticipantRequestContext } from '@/lib/researcherContext';
 import { StoredInterview } from '@/types';
 
 export async function POST(request: Request) {
   try {
-    // Verify participant token or admin session (for researcher preview)
-    const auth = await verifyParticipantToken(request);
-    if (!auth.valid) {
+    // Verify participant token or admin session and resolve researcher context
+    const { valid, context, studyId, isAdmin, error } = await getParticipantRequestContext(request);
+    if (!valid || !context) {
       return NextResponse.json(
-        { error: 'Valid participant token or admin session required' },
+        { error: error || 'Valid participant token or admin session required' },
         { status: 401 }
       );
     }
@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     const clientData = body as Partial<StoredInterview>;
 
     // Validate studyId matches the token's studyId (skip for admin sessions)
-    if (!auth.isAdmin && auth.studyId && clientData.studyId && auth.studyId !== clientData.studyId) {
+    if (!isAdmin && studyId && clientData.studyId && studyId !== clientData.studyId) {
       return NextResponse.json(
         { error: 'Study ID mismatch - token is for a different study' },
         { status: 403 }
@@ -83,15 +83,16 @@ export async function POST(request: Request) {
         contradictions: []
       },
       // Server-controlled timestamps - don't trust client-provided values
-      createdAt: clientData.createdAt && clientData.createdAt < now
-        ? clientData.createdAt  // Accept if in the past (reasonable)
+      // Accept client createdAt only if in the past and within 30 days
+      createdAt: clientData.createdAt && clientData.createdAt < now && clientData.createdAt > now - 30 * 24 * 60 * 60 * 1000
+        ? clientData.createdAt
         : now,
       completedAt: now,  // Always server-generated
       status: 'completed'  // Always set by server
     };
 
     // Check if KV is available
-    const kvAvailable = await isKVAvailable();
+    const kvAvailable = await isKVAvailable(context.kvClient);
     if (!kvAvailable) {
       // Return success but with warning
       console.warn('KV not available. Interview not persisted.');
@@ -102,8 +103,8 @@ export async function POST(request: Request) {
       });
     }
 
-    // Save the interview
-    const success = await saveInterview(interview);
+    // Save the interview using researcher's KV client
+    const success = await saveInterview(interview, context.kvClient);
 
     if (!success) {
       return NextResponse.json(
@@ -115,8 +116,8 @@ export async function POST(request: Request) {
     // Update study metadata (increment count and lock if first interview)
     // These operations are non-critical - don't fail the request if they fail
     try {
-      await incrementStudyInterviewCount(interview.studyId);
-      await lockStudy(interview.studyId);
+      await incrementStudyInterviewCount(interview.studyId, context.kvClient);
+      await lockStudy(interview.studyId, context.kvClient);
     } catch (studyUpdateError) {
       // Log but don't fail - study may not exist in KV (legacy/token-only studies)
       console.warn('Failed to update study metadata:', studyUpdateError);

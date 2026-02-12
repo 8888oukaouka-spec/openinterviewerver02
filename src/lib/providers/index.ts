@@ -8,10 +8,17 @@ import { StudyConfig } from '@/types';
 
 export type ProviderType = 'gemini' | 'claude';
 
+// Optional per-request API keys (for hosted/BYOK mode)
+export interface AIProviderKeys {
+  geminiApiKey?: string | null;
+  anthropicApiKey?: string | null;
+}
+
 // Get the interview AI provider based on configuration
 // Provider priority: studyConfig.aiProvider > env.AI_PROVIDER > 'gemini'
 // Model priority: studyConfig.aiModel > env.GEMINI_MODEL/CLAUDE_MODEL > env.AI_MODEL > default
-export function getInterviewProvider(studyConfig?: StudyConfig): AIProvider {
+// In hosted mode, pass keys from ResearcherContext; in standalone, keys are null and env vars are used
+export function getInterviewProvider(studyConfig?: StudyConfig, keys?: AIProviderKeys): AIProvider {
   const providerType = (
     studyConfig?.aiProvider ||          // Study-level preference
     process.env.AI_PROVIDER ||          // Environment fallback
@@ -23,10 +30,10 @@ export function getInterviewProvider(studyConfig?: StudyConfig): AIProvider {
 
   switch (providerType) {
     case 'claude':
-      return new ClaudeProvider(model);
+      return new ClaudeProvider(model, keys?.anthropicApiKey);
     case 'gemini':
     default:
-      return new GeminiProvider(model);
+      return new GeminiProvider(model, keys?.geminiApiKey);
   }
 }
 

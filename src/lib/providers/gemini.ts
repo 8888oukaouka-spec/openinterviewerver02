@@ -36,12 +36,12 @@ export class GeminiProvider implements AIProvider {
   private ai: GoogleGenAI;
   private model: string;
 
-  constructor(model?: string) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error('GEMINI_API_KEY environment variable is required');
+  constructor(model?: string, apiKey?: string | null) {
+    const key = apiKey || process.env.GEMINI_API_KEY;
+    if (!key) {
+      throw new Error('GEMINI_API_KEY is required');
     }
-    this.ai = new GoogleGenAI({ apiKey });
+    this.ai = new GoogleGenAI({ apiKey: key });
     // Priority: constructor param > GEMINI_MODEL env > AI_MODEL env (legacy) > default
     this.model = model ||
       process.env.GEMINI_MODEL ||

@@ -4,7 +4,7 @@
 
 import { NextResponse } from 'next/server';
 import { getInterviewProvider } from '@/lib/providers';
-import { verifyParticipantToken } from '@/lib/auth';
+import { getParticipantRequestContext } from '@/lib/researcherContext';
 import {
   StudyConfig,
   ParticipantProfile,
@@ -19,11 +19,11 @@ const MAX_MESSAGE_LENGTH = 5000;
 
 export async function POST(request: Request) {
   try {
-    // Verify participant token
-    const auth = await verifyParticipantToken(request);
-    if (!auth.valid) {
+    // Verify participant token and resolve researcher context
+    const { valid, context, studyId, isAdmin, error } = await getParticipantRequestContext(request);
+    if (!valid || !context) {
       return NextResponse.json(
-        { error: 'Valid participant token required' },
+        { error: error || 'Valid participant token required' },
         { status: 401 }
       );
     }
@@ -63,16 +63,18 @@ export async function POST(request: Request) {
 
     // Verify token's studyId matches the requested study (prevents token reuse across studies)
     // Skip for admin users (researchers previewing their studies)
-    if (!auth.isAdmin && auth.studyId && studyConfig.id && auth.studyId !== studyConfig.id) {
+    if (!isAdmin && studyId && studyConfig.id && studyId !== studyConfig.id) {
       return NextResponse.json(
         { error: 'Token not valid for this study' },
         { status: 403 }
       );
     }
 
-    // Get the configured AI provider (Gemini or Claude)
-    // Priority: studyConfig.aiProvider > env.AI_PROVIDER > 'gemini'
-    const provider = getInterviewProvider(studyConfig);
+    // Get the configured AI provider with researcher's API keys
+    const provider = getInterviewProvider(studyConfig, {
+      geminiApiKey: context.geminiApiKey,
+      anthropicApiKey: context.anthropicApiKey,
+    });
 
     // Generate synthesis using the provider
     const result = await provider.synthesizeInterview(

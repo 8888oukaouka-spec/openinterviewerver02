@@ -5,39 +5,19 @@
 export const dynamic = 'force-dynamic';
 
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { getInterviewProvider } from '@/lib/providers';
-import { verifySessionToken, SESSION_COOKIE_NAME } from '@/lib/auth';
+import { getRequestContext } from '@/lib/researcherContext';
 import { getStudy, getStudyInterviews, isKVAvailable } from '@/lib/kv';
 import { AggregateSynthesisResult, SynthesisResult } from '@/types';
 
-// Verify admin session
-async function verifyAuth() {
-  const cookieStore = await cookies();
-  const authCookie = cookieStore.get(SESSION_COOKIE_NAME);
-
-  if (!authCookie?.value) {
-    return { authorized: false, error: 'Unauthorized' };
-  }
-
-  const isValid = await verifySessionToken(authCookie.value);
-  if (!isValid) {
-    return { authorized: false, error: 'Session expired or invalid' };
-  }
-
-  return { authorized: true };
-}
-
 export async function POST(request: Request) {
   try {
-    // Verify researcher authentication
-    const auth = await verifyAuth();
-    if (!auth.authorized) {
-      return NextResponse.json({ error: auth.error }, { status: 401 });
+    const { authorized, context, error } = await getRequestContext();
+    if (!authorized || !context) {
+      return NextResponse.json({ error: error || 'Unauthorized' }, { status: 401 });
     }
 
-    // Check KV availability
-    const kvAvailable = await isKVAvailable();
+    const kvAvailable = await isKVAvailable(context.kvClient);
     if (!kvAvailable) {
       return NextResponse.json(
         { error: 'Storage not configured. Connect Vercel KV to enable this feature.' },
@@ -57,7 +37,7 @@ export async function POST(request: Request) {
     }
 
     // Fetch study to get config
-    const study = await getStudy(studyId);
+    const study = await getStudy(studyId, context.kvClient);
     if (!study) {
       return NextResponse.json(
         { error: 'Study not found' },
@@ -66,7 +46,7 @@ export async function POST(request: Request) {
     }
 
     // Fetch all interviews for this study
-    const interviews = await getStudyInterviews(studyId);
+    const interviews = await getStudyInterviews(studyId, context.kvClient);
     if (interviews.length < 2) {
       return NextResponse.json(
         { error: 'Need at least 2 interviews to generate aggregate synthesis' },
@@ -86,9 +66,11 @@ export async function POST(request: Request) {
       );
     }
 
-    // Get the configured AI provider
-    // Priority: studyConfig.aiProvider > env.AI_PROVIDER > 'gemini'
-    const provider = getInterviewProvider(study.config);
+    // Get the configured AI provider with researcher's API keys
+    const provider = getInterviewProvider(study.config, {
+      geminiApiKey: context.geminiApiKey,
+      anthropicApiKey: context.anthropicApiKey,
+    });
 
     // Generate aggregate synthesis
     const aggregateResult = await provider.synthesizeAggregate(

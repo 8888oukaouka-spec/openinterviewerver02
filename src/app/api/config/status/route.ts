@@ -4,29 +4,21 @@
 export const dynamic = 'force-dynamic';
 
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { verifySessionToken, SESSION_COOKIE_NAME } from '@/lib/auth';
+import { getRequestContext } from '@/lib/researcherContext';
 
 export async function GET() {
   try {
-    // Require admin session - only researchers need this info
-    const cookieStore = await cookies();
-    const sessionToken = cookieStore.get(SESSION_COOKIE_NAME)?.value;
-
-    if (!sessionToken || !(await verifySessionToken(sessionToken))) {
-      return NextResponse.json(
-        { error: 'Authentication required' },
-        { status: 401 }
-      );
+    const { authorized, context, error } = await getRequestContext();
+    if (!authorized || !context) {
+      return NextResponse.json({ error: error || 'Authentication required' }, { status: 401 });
     }
 
-    // Check which keys are configured (server-side check)
+    // Return researcher-specific key status from context
+    // In standalone mode, these come from env vars
+    // In hosted mode, these come from the researcher's decrypted credentials
     const status = {
-      // Claude provider support
-      hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY,
-
-      // Gemini provider support
-      hasGeminiKey: !!process.env.GEMINI_API_KEY,
+      hasAnthropicKey: !!context.anthropicApiKey,
+      hasGeminiKey: !!context.geminiApiKey,
     };
 
     return NextResponse.json(status);

@@ -1,41 +1,22 @@
 // POST /api/demo/seed - Seed demo data to KV
+// DELETE /api/demo/seed - Clear demo data from KV
 // Protected: Requires authenticated admin session
 
 export const dynamic = 'force-dynamic';
 
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { verifySessionToken, SESSION_COOKIE_NAME } from '@/lib/auth';
+import { getRequestContext } from '@/lib/researcherContext';
 import { saveStudy, saveInterview, isKVAvailable, getAllStudies } from '@/lib/kv';
-import { DEMO_STUDIES, DEMO_INTERVIEWS, DEMO_AGGREGATE_SYNTHESIS } from '@/lib/demoData';
-
-// Verify admin session
-async function verifyAuth() {
-  const cookieStore = await cookies();
-  const authCookie = cookieStore.get(SESSION_COOKIE_NAME);
-
-  if (!authCookie?.value) {
-    return { authorized: false, error: 'Unauthorized' };
-  }
-
-  const isValid = await verifySessionToken(authCookie.value);
-  if (!isValid) {
-    return { authorized: false, error: 'Session expired or invalid' };
-  }
-
-  return { authorized: true };
-}
+import { DEMO_STUDIES, DEMO_INTERVIEWS } from '@/lib/demoData';
 
 export async function POST() {
   try {
-    // Check authentication
-    const auth = await verifyAuth();
-    if (!auth.authorized) {
-      return NextResponse.json({ error: auth.error }, { status: 401 });
+    const { authorized, context, error } = await getRequestContext();
+    if (!authorized || !context) {
+      return NextResponse.json({ error: error || 'Unauthorized' }, { status: 401 });
     }
 
-    // Check KV availability
-    const kvAvailable = await isKVAvailable();
+    const kvAvailable = await isKVAvailable(context.kvClient);
     if (!kvAvailable) {
       return NextResponse.json(
         { error: 'Storage not configured. Please connect Vercel KV (Upstash Redis) first.' },
@@ -44,7 +25,7 @@ export async function POST() {
     }
 
     // Check if demo data already exists
-    const existingStudies = await getAllStudies();
+    const existingStudies = await getAllStudies(context.kvClient);
     const demoExists = existingStudies.some(s => s.id.startsWith('demo-'));
     if (demoExists) {
       return NextResponse.json(
@@ -56,14 +37,14 @@ export async function POST() {
     // Seed studies
     let studiesSeeded = 0;
     for (const study of DEMO_STUDIES) {
-      const success = await saveStudy(study);
+      const success = await saveStudy(study, context.kvClient);
       if (success) studiesSeeded++;
     }
 
     // Seed interviews
     let interviewsSeeded = 0;
     for (const interview of DEMO_INTERVIEWS) {
-      const success = await saveInterview(interview);
+      const success = await saveInterview(interview, context.kvClient);
       if (success) interviewsSeeded++;
     }
 
@@ -88,14 +69,12 @@ export async function POST() {
 // DELETE /api/demo/seed - Clear demo data from KV
 export async function DELETE() {
   try {
-    // Check authentication
-    const auth = await verifyAuth();
-    if (!auth.authorized) {
-      return NextResponse.json({ error: auth.error }, { status: 401 });
+    const { authorized, context, error } = await getRequestContext();
+    if (!authorized || !context) {
+      return NextResponse.json({ error: error || 'Unauthorized' }, { status: 401 });
     }
 
-    // Check KV availability
-    const kvAvailable = await isKVAvailable();
+    const kvAvailable = await isKVAvailable(context.kvClient);
     if (!kvAvailable) {
       return NextResponse.json(
         { error: 'Storage not configured.' },
@@ -103,8 +82,8 @@ export async function DELETE() {
       );
     }
 
-    // Import kv for direct operations
-    const { kv } = await import('@vercel/kv');
+    // Use the researcher's KV client directly for cleanup operations
+    const kv = context.kvClient;
 
     // Delete demo studies
     let studiesDeleted = 0;

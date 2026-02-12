@@ -36,12 +36,12 @@ export class ClaudeProvider implements AIProvider {
   private client: Anthropic;
   private model: string;
 
-  constructor(model?: string) {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      throw new Error('ANTHROPIC_API_KEY environment variable is required for Claude provider');
+  constructor(model?: string, apiKey?: string | null) {
+    const key = apiKey || process.env.ANTHROPIC_API_KEY;
+    if (!key) {
+      throw new Error('ANTHROPIC_API_KEY is required for Claude provider');
     }
-    this.client = new Anthropic({ apiKey });
+    this.client = new Anthropic({ apiKey: key });
     // Priority: constructor param > CLAUDE_MODEL env > AI_MODEL env (legacy) > default
     this.model = model ||
       process.env.CLAUDE_MODEL ||

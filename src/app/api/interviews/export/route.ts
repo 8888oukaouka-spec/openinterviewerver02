@@ -5,8 +5,7 @@ export const dynamic = 'force-dynamic';
 
 import { NextResponse } from 'next/server';
 import { getAllInterviews, isKVAvailable } from '@/lib/kv';
-import { cookies } from 'next/headers';
-import { verifySessionToken, SESSION_COOKIE_NAME } from '@/lib/auth';
+import { getRequestContext } from '@/lib/researcherContext';
 import JSZip from 'jszip';
 import { StoredInterview } from '@/types';
 
@@ -75,28 +74,12 @@ function generateTranscript(interview: StoredInterview): string {
 
 export async function GET() {
   try {
-    // Check authentication with token validation
-    const cookieStore = await cookies();
-    const authCookie = cookieStore.get(SESSION_COOKIE_NAME);
-
-    if (!authCookie?.value) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
+    const { authorized, context, error } = await getRequestContext();
+    if (!authorized || !context) {
+      return NextResponse.json({ error: error || 'Unauthorized' }, { status: 401 });
     }
 
-    // Verify the session token is valid
-    const isValid = await verifySessionToken(authCookie.value);
-    if (!isValid) {
-      return NextResponse.json(
-        { error: 'Session expired or invalid' },
-        { status: 401 }
-      );
-    }
-
-    // Check if KV is available
-    const kvAvailable = await isKVAvailable();
+    const kvAvailable = await isKVAvailable(context.kvClient);
     if (!kvAvailable) {
       return NextResponse.json(
         { error: 'Storage not configured' },
@@ -105,7 +88,7 @@ export async function GET() {
     }
 
     // Get all interviews
-    const interviews = await getAllInterviews();
+    const interviews = await getAllInterviews(context.kvClient);
 
     if (interviews.length === 0) {
       return NextResponse.json(

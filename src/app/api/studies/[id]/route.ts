@@ -7,26 +7,10 @@ export const dynamic = 'force-dynamic';
 
 import { NextResponse } from 'next/server';
 import { getStudy, saveStudy, deleteStudy, isKVAvailable } from '@/lib/kv';
-import { cookies } from 'next/headers';
-import { verifySessionToken, SESSION_COOKIE_NAME } from '@/lib/auth';
+import { getRequestContext } from '@/lib/researcherContext';
+import { deleteStudyOwnership } from '@/lib/platformDb';
+import { isHostedMode } from '@/lib/mode';
 import { StudyConfig } from '@/types';
-
-// Verify admin session
-async function verifyAuth() {
-  const cookieStore = await cookies();
-  const authCookie = cookieStore.get(SESSION_COOKIE_NAME);
-
-  if (!authCookie?.value) {
-    return { authorized: false, error: 'Unauthorized' };
-  }
-
-  const isValid = await verifySessionToken(authCookie.value);
-  if (!isValid) {
-    return { authorized: false, error: 'Session expired or invalid' };
-  }
-
-  return { authorized: true };
-}
 
 // GET /api/studies/[id] - Get single study
 export async function GET(
@@ -34,14 +18,14 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const auth = await verifyAuth();
-    if (!auth.authorized) {
-      return NextResponse.json({ error: auth.error }, { status: 401 });
+    const { authorized, context, error } = await getRequestContext();
+    if (!authorized || !context) {
+      return NextResponse.json({ error: error || 'Unauthorized' }, { status: 401 });
     }
 
     const { id } = await params;
 
-    const kvAvailable = await isKVAvailable();
+    const kvAvailable = await isKVAvailable(context.kvClient);
     if (!kvAvailable) {
       return NextResponse.json(
         { error: 'Storage not configured' },
@@ -49,7 +33,7 @@ export async function GET(
       );
     }
 
-    const study = await getStudy(id);
+    const study = await getStudy(id, context.kvClient);
     if (!study) {
       return NextResponse.json(
         { error: 'Study not found' },
@@ -73,14 +57,14 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const auth = await verifyAuth();
-    if (!auth.authorized) {
-      return NextResponse.json({ error: auth.error }, { status: 401 });
+    const { authorized, context, error } = await getRequestContext();
+    if (!authorized || !context) {
+      return NextResponse.json({ error: error || 'Unauthorized' }, { status: 401 });
     }
 
     const { id } = await params;
 
-    const kvAvailable = await isKVAvailable();
+    const kvAvailable = await isKVAvailable(context.kvClient);
     if (!kvAvailable) {
       return NextResponse.json(
         { error: 'Storage not configured' },
@@ -88,7 +72,7 @@ export async function PUT(
       );
     }
 
-    const study = await getStudy(id);
+    const study = await getStudy(id, context.kvClient);
     if (!study) {
       return NextResponse.json(
         { error: 'Study not found' },
@@ -126,13 +110,27 @@ export async function PUT(
       createdAt: study.config.createdAt // Preserve original creation time
     };
 
+    // Validate required fields still exist after merge
+    if (!updatedConfig.name || !updatedConfig.researchQuestion) {
+      return NextResponse.json(
+        { error: 'Missing required fields: name and researchQuestion are required' },
+        { status: 400 }
+      );
+    }
+    if (!updatedConfig.coreQuestions || !Array.isArray(updatedConfig.coreQuestions) || updatedConfig.coreQuestions.length === 0) {
+      return NextResponse.json(
+        { error: 'At least one core question is required' },
+        { status: 400 }
+      );
+    }
+
     const updatedStudy = {
       ...study,
       config: updatedConfig,
       updatedAt: Date.now()
     };
 
-    const success = await saveStudy(updatedStudy);
+    const success = await saveStudy(updatedStudy, context.kvClient);
     if (!success) {
       return NextResponse.json(
         { error: 'Failed to update study' },
@@ -159,14 +157,14 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const auth = await verifyAuth();
-    if (!auth.authorized) {
-      return NextResponse.json({ error: auth.error }, { status: 401 });
+    const { authorized, context, researcherId, error } = await getRequestContext();
+    if (!authorized || !context) {
+      return NextResponse.json({ error: error || 'Unauthorized' }, { status: 401 });
     }
 
     const { id } = await params;
 
-    const kvAvailable = await isKVAvailable();
+    const kvAvailable = await isKVAvailable(context.kvClient);
     if (!kvAvailable) {
       return NextResponse.json(
         { error: 'Storage not configured' },
@@ -174,7 +172,7 @@ export async function DELETE(
       );
     }
 
-    const study = await getStudy(id);
+    const study = await getStudy(id, context.kvClient);
     if (!study) {
       return NextResponse.json(
         { error: 'Study not found' },
@@ -182,12 +180,21 @@ export async function DELETE(
       );
     }
 
-    const result = await deleteStudy(id);
+    const result = await deleteStudy(id, context.kvClient);
     if (!result.success) {
       return NextResponse.json(
         { error: result.error || 'Failed to delete study' },
         { status: 400 }
       );
+    }
+
+    // In hosted mode, clean up study ownership record
+    if (isHostedMode() && researcherId) {
+      try {
+        await deleteStudyOwnership(id);
+      } catch (err) {
+        console.warn('Failed to delete study ownership:', err);
+      }
     }
 
     return NextResponse.json({

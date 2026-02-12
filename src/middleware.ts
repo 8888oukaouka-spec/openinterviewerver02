@@ -5,19 +5,19 @@ import * as jose from 'jose';
 const SESSION_COOKIE_NAME = 'research-auth';
 
 // Routes that require authentication
-const protectedRoutes = ['/dashboard', '/studies'];
+const protectedRoutes = ['/dashboard', '/studies', '/onboarding', '/settings'];
 
 // Verify session token in edge middleware
-async function verifySession(token: string, request: NextRequest): Promise<boolean> {
+async function verifySession(token: string): Promise<{ valid: boolean; researcherId?: string }> {
   if (!token) {
-    return false;
+    return { valid: false };
   }
 
   // Use SESSION_SECRET if available, fall back to ADMIN_PASSWORD
   // This must match the secret used in src/lib/auth.ts
   const secret = process.env.SESSION_SECRET || process.env.ADMIN_PASSWORD;
   if (!secret) {
-    return false;
+    return { valid: false };
   }
 
   try {
@@ -26,13 +26,16 @@ async function verifySession(token: string, request: NextRequest): Promise<boole
 
     // Check that it's a session token
     if (payload.type !== 'session') {
-      return false;
+      return { valid: false };
     }
 
-    return true;
-  } catch (error) {
+    return {
+      valid: true,
+      researcherId: payload.researcherId as string | undefined,
+    };
+  } catch {
     // Token invalid, expired, or tampered with
-    return false;
+    return { valid: false };
   }
 }
 
@@ -57,9 +60,9 @@ export async function middleware(request: NextRequest) {
   }
 
   // Verify the token is valid (not just that it exists)
-  const isValid = await verifySession(authCookie.value, request);
+  const session = await verifySession(authCookie.value);
 
-  if (!isValid) {
+  if (!session.valid) {
     // Invalid token - clear cookie and redirect to login
     const loginUrl = new URL('/login', request.url);
     loginUrl.searchParams.set('redirect', pathname);
