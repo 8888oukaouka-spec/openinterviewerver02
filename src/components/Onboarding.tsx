@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import {
   Database, Key, CheckCircle, ArrowRight, ArrowLeft,
-  Loader2, AlertCircle, ExternalLink, Sparkles
+  Loader2, AlertCircle, ExternalLink, Sparkles, ChevronDown, ChevronUp
 } from 'lucide-react';
 
 type Step = 'welcome' | 'ai-keys' | 'redis' | 'done';
@@ -34,6 +34,11 @@ const Onboarding: React.FC = () => {
   const [redisValidation, setRedisValidation] = useState<ValidationState>({ loading: false, valid: null, error: null });
 
   const [saving, setSaving] = useState(false);
+
+  // Expandable guide state
+  const [geminiGuideOpen, setGeminiGuideOpen] = useState(false);
+  const [claudeGuideOpen, setClaudeGuideOpen] = useState(false);
+  const [redisGuideOpen, setRedisGuideOpen] = useState(false);
 
   // Fetch profile on mount
   useEffect(() => {
@@ -216,9 +221,36 @@ const Onboarding: React.FC = () => {
                       </button>
                     </div>
                     {geminiValidation.error && <p className="text-red-400 text-xs mt-1">{geminiValidation.error}</p>}
-                    <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="text-xs text-stone-500 hover:text-stone-400 mt-1 inline-flex items-center gap-1">
-                      Get a free key <ExternalLink size={10} />
-                    </a>
+
+                    {/* Expandable setup guide */}
+                    <div className="mt-2">
+                      <button
+                        onClick={() => setGeminiGuideOpen(!geminiGuideOpen)}
+                        className="text-xs text-stone-500 hover:text-stone-400 inline-flex items-center gap-1"
+                      >
+                        {geminiGuideOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                        How to get a Gemini API key
+                      </button>
+
+                      {geminiGuideOpen && (
+                        <div className="mt-2 p-3 bg-stone-800/30 border border-stone-600 rounded-lg text-xs space-y-2">
+                          <ol className="list-decimal list-inside space-y-1 text-stone-300">
+                            <li>Go to <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="text-stone-400 hover:text-stone-300 underline">aistudio.google.com/apikey</a></li>
+                            <li>Sign in with any Google account</li>
+                            <li>Click "Create API key" (auto-creates a Google Cloud project)</li>
+                            <li>Copy the key (starts with AIza)</li>
+                          </ol>
+                          <div className="flex items-start gap-1.5 text-stone-400 mt-2">
+                            <span>•</span>
+                            <span>No credit card required</span>
+                          </div>
+                          <div className="flex items-start gap-1.5 text-stone-400">
+                            <span>•</span>
+                            <span>Free tier: 10 req/min, 250 req/day for Gemini 2.5 Flash</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   {/* Claude */}
@@ -244,9 +276,36 @@ const Onboarding: React.FC = () => {
                       </button>
                     </div>
                     {anthropicValidation.error && <p className="text-red-400 text-xs mt-1">{anthropicValidation.error}</p>}
-                    <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" className="text-xs text-stone-500 hover:text-stone-400 mt-1 inline-flex items-center gap-1">
-                      Get a key <ExternalLink size={10} />
-                    </a>
+
+                    {/* Expandable setup guide */}
+                    <div className="mt-2">
+                      <button
+                        onClick={() => setClaudeGuideOpen(!claudeGuideOpen)}
+                        className="text-xs text-stone-500 hover:text-stone-400 inline-flex items-center gap-1"
+                      >
+                        {claudeGuideOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                        How to get a Claude API key
+                      </button>
+
+                      {claudeGuideOpen && (
+                        <div className="mt-2 p-3 bg-stone-800/30 border border-stone-600 rounded-lg text-xs space-y-2">
+                          <ol className="list-decimal list-inside space-y-1 text-stone-300">
+                            <li>Go to <a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer" className="text-stone-400 hover:text-stone-300 underline">console.anthropic.com</a></li>
+                            <li>Sign up with email or Google account</li>
+                            <li>Claim $5 free credits (requires phone verification, US numbers only)</li>
+                            <li>Go to API Keys → Create API Key → copy it (starts with sk-ant-)</li>
+                          </ol>
+                          <div className="flex items-start gap-1.5 text-stone-400 mt-2">
+                            <span>•</span>
+                            <span>$5 free credits ≈ 15-100 interviews with Haiku</span>
+                          </div>
+                          <div className="flex items-start gap-1.5 text-amber-400">
+                            <span>•</span>
+                            <span>Credit card required after free credits expire</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </motion.div>
@@ -300,9 +359,37 @@ const Onboarding: React.FC = () => {
                     </button>
                   </div>
 
-                  <a href="https://console.upstash.com" target="_blank" rel="noopener noreferrer" className="text-xs text-stone-500 hover:text-stone-400 inline-flex items-center gap-1">
-                    Create a free Upstash Redis database <ExternalLink size={10} />
-                  </a>
+                  {/* Expandable setup guide */}
+                  <div>
+                    <button
+                      onClick={() => setRedisGuideOpen(!redisGuideOpen)}
+                      className="text-xs text-stone-500 hover:text-stone-400 inline-flex items-center gap-1"
+                    >
+                      {redisGuideOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                      How to set up Upstash Redis
+                    </button>
+
+                    {redisGuideOpen && (
+                      <div className="mt-2 p-3 bg-stone-800/30 border border-stone-600 rounded-lg text-xs space-y-2">
+                        <ol className="list-decimal list-inside space-y-1 text-stone-300">
+                          <li>Go to <a href="https://console.upstash.com" target="_blank" rel="noopener noreferrer" className="text-stone-400 hover:text-stone-300 underline">console.upstash.com</a> and sign up with Google/GitHub</li>
+                          <li>Click "+ Create Database"</li>
+                          <li>Choose Regional (recommended), select nearest region</li>
+                          <li>Select Free plan (256 MB, 500K commands/month)</li>
+                          <li>After creation, go to database details → REST API section</li>
+                          <li>Copy REST URL (https://*.upstash.io) and REST Token</li>
+                        </ol>
+                        <div className="flex items-start gap-1.5 text-amber-400 mt-2">
+                          <span>⚠</span>
+                          <span>Use the REST URL (https://), not the regular Redis URL (redis://)</span>
+                        </div>
+                        <div className="flex items-start gap-1.5 text-stone-400">
+                          <span>•</span>
+                          <span>Free tier: 1 database, 256 MB, 500K commands/month</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </motion.div>
             )}

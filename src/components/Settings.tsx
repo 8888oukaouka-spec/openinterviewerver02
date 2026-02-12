@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import {
   Database, Key, CheckCircle, XCircle, Loader2,
-  AlertCircle, ExternalLink, ArrowLeft, Save
+  AlertCircle, ExternalLink, ArrowLeft, Save, ChevronDown, ChevronUp
 } from 'lucide-react';
 
 interface ResearcherProfile {
@@ -42,6 +42,11 @@ const Settings: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Expandable guide state
+  const [geminiGuideOpen, setGeminiGuideOpen] = useState(false);
+  const [claudeGuideOpen, setClaudeGuideOpen] = useState(false);
+  const [redisGuideOpen, setRedisGuideOpen] = useState(false);
 
   useEffect(() => {
     fetch('/api/auth/me')
@@ -231,9 +236,31 @@ const Settings: React.FC = () => {
                 </button>
               </div>
               {geminiValidation.error && <p className="text-red-400 text-xs mt-1">{geminiValidation.error}</p>}
-              <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="text-xs text-stone-500 hover:text-stone-400 mt-1 inline-flex items-center gap-1">
-                Get a free key <ExternalLink size={10} />
-              </a>
+
+              {/* Expandable setup guide */}
+              <div className="mt-2">
+                <button
+                  onClick={() => setGeminiGuideOpen(!geminiGuideOpen)}
+                  className="text-xs text-stone-500 hover:text-stone-400 inline-flex items-center gap-1"
+                >
+                  {geminiGuideOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                  Setup guide
+                </button>
+
+                {geminiGuideOpen && (
+                  <div className="mt-2 p-3 bg-stone-800/30 border border-stone-600 rounded-lg text-xs space-y-2">
+                    <ol className="list-decimal list-inside space-y-1 text-stone-300">
+                      <li>Go to <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="text-stone-400 hover:text-stone-300 underline">aistudio.google.com/apikey</a></li>
+                      <li>Sign in and click "Create API key"</li>
+                      <li>Copy the key (starts with AIza)</li>
+                    </ol>
+                    <div className="flex items-start gap-1.5 text-stone-400 mt-2">
+                      <span>•</span>
+                      <span>Free: 10 req/min, 250 req/day</span>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div>
@@ -258,9 +285,31 @@ const Settings: React.FC = () => {
                 </button>
               </div>
               {anthropicValidation.error && <p className="text-red-400 text-xs mt-1">{anthropicValidation.error}</p>}
-              <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" className="text-xs text-stone-500 hover:text-stone-400 mt-1 inline-flex items-center gap-1">
-                Get a key <ExternalLink size={10} />
-              </a>
+
+              {/* Expandable setup guide */}
+              <div className="mt-2">
+                <button
+                  onClick={() => setClaudeGuideOpen(!claudeGuideOpen)}
+                  className="text-xs text-stone-500 hover:text-stone-400 inline-flex items-center gap-1"
+                >
+                  {claudeGuideOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                  Setup guide
+                </button>
+
+                {claudeGuideOpen && (
+                  <div className="mt-2 p-3 bg-stone-800/30 border border-stone-600 rounded-lg text-xs space-y-2">
+                    <ol className="list-decimal list-inside space-y-1 text-stone-300">
+                      <li>Go to <a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer" className="text-stone-400 hover:text-stone-300 underline">console.anthropic.com</a></li>
+                      <li>Sign up and claim $5 free credits (US phone verification required)</li>
+                      <li>Go to API Keys → Create API Key → copy it (starts with sk-ant-)</li>
+                    </ol>
+                    <div className="flex items-start gap-1.5 text-stone-400 mt-2">
+                      <span>•</span>
+                      <span>$5 free ≈ 15-100 interviews</span>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -311,9 +360,32 @@ const Settings: React.FC = () => {
                 {redisValidation.loading ? 'Testing...' : 'Test Connection'}
               </button>
             </div>
-            <a href="https://console.upstash.com" target="_blank" rel="noopener noreferrer" className="text-xs text-stone-500 hover:text-stone-400 inline-flex items-center gap-1">
-              Manage your Upstash databases <ExternalLink size={10} />
-            </a>
+
+            {/* Expandable setup guide */}
+            <div>
+              <button
+                onClick={() => setRedisGuideOpen(!redisGuideOpen)}
+                className="text-xs text-stone-500 hover:text-stone-400 inline-flex items-center gap-1"
+              >
+                {redisGuideOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                Setup guide
+              </button>
+
+              {redisGuideOpen && (
+                <div className="mt-2 p-3 bg-stone-800/30 border border-stone-600 rounded-lg text-xs space-y-2">
+                  <ol className="list-decimal list-inside space-y-1 text-stone-300">
+                    <li>Go to <a href="https://console.upstash.com" target="_blank" rel="noopener noreferrer" className="text-stone-400 hover:text-stone-300 underline">console.upstash.com</a> and sign in</li>
+                    <li>Click "+ Create Database" → choose Regional and Free plan</li>
+                    <li>After creation, go to database details → REST API section</li>
+                    <li>Copy REST URL (https://*.upstash.io) and REST Token</li>
+                  </ol>
+                  <div className="flex items-start gap-1.5 text-amber-400 mt-2">
+                    <span>⚠</span>
+                    <span>Use REST URL (https://), not regular URL (redis://)</span>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
