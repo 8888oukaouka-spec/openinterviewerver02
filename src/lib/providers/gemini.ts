@@ -172,7 +172,9 @@ export class GeminiProvider implements AIProvider {
           thinkingConfig: { thinkingBudget: THINKING_BUDGET_OFF }
         }
       });
-      return response.text || getDefaultGreeting(studyConfig);
+      // Strip any surrounding quotes or escape chars the model may add
+      const text = (response.text || '').trim().replace(/^["'\\]+|["'\\]+$/g, '');
+      return text || getDefaultGreeting(studyConfig);
     } catch (error) {
       console.error('Gemini greeting error:', error);
       return getDefaultGreeting(studyConfig);
