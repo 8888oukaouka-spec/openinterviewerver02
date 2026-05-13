@@ -1,31 +1,26 @@
 'use client';
-
 import React from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { useStore } from '@/store';
 import { Shield, ArrowRight, ArrowLeft, MessageSquare, Clock, HelpCircle } from 'lucide-react';
-
 const Consent: React.FC = () => {
   const router = useRouter();
   const { studyConfig, giveConsent, setStep, viewMode, initializeProfile } = useStore();
-
   const handleConsent = () => {
     giveConsent();
     // Initialize profile structure from study schema
     if (studyConfig?.profileSchema) {
       initializeProfile(studyConfig.profileSchema);
     }
-    // Skip directly to interview (merged intake/profile into conversation)
+    // Stay on /p/[token] page — just change the step
+    // Do NOT router.push('/interview') as it loses the participant token
     setStep('interview');
-    router.push('/interview');
   };
-
   const handleBack = () => {
     setStep('setup');
     router.push('/setup');
   };
-
   if (!studyConfig) {
     return (
       <div className="min-h-screen bg-stone-900 flex items-center justify-center">
@@ -33,7 +28,6 @@ const Consent: React.FC = () => {
       </div>
     );
   }
-
   return (
     <div className="min-h-screen bg-stone-900 flex items-center justify-center p-8">
       <motion.div
@@ -52,20 +46,17 @@ const Consent: React.FC = () => {
               {studyConfig.name}
             </p>
           </div>
-
           {/* Content */}
           <div className="p-6 space-y-6">
             <div className="prose prose-sm max-w-none text-stone-300">
               <p className="whitespace-pre-wrap">{studyConfig.consentText}</p>
             </div>
-
             {/* Interview Structure Foreshadowing */}
             <div className="bg-stone-800 rounded-xl p-5 space-y-4">
               <h3 className="font-semibold text-stone-100 flex items-center gap-2">
                 <MessageSquare size={18} className="text-stone-400" />
                 Interview Structure
               </h3>
-
               <div className="space-y-3 text-sm">
                 <div className="flex items-start gap-3">
                   <div className="w-6 h-6 rounded-full bg-stone-700 flex items-center justify-center text-xs text-stone-400 flex-shrink-0 mt-0.5">1</div>
@@ -74,7 +65,6 @@ const Consent: React.FC = () => {
                     <div className="text-stone-500 text-xs">Help us understand your context</div>
                   </div>
                 </div>
-
                 <div className="flex items-start gap-3">
                   <div className="w-6 h-6 rounded-full bg-stone-700 flex items-center justify-center text-xs text-stone-400 flex-shrink-0 mt-0.5">2</div>
                   <div>
@@ -82,7 +72,6 @@ const Consent: React.FC = () => {
                     <div className="text-stone-500 text-xs">The heart of the interview</div>
                   </div>
                 </div>
-
                 <div className="flex items-start gap-3">
                   <div className="w-6 h-6 rounded-full bg-stone-700 flex items-center justify-center text-xs text-stone-400 flex-shrink-0 mt-0.5">
                     <HelpCircle size={12} />
@@ -92,7 +81,6 @@ const Consent: React.FC = () => {
                     <div className="text-stone-500 text-xs">To better understand your perspective</div>
                   </div>
                 </div>
-
                 <div className="flex items-start gap-3">
                   <div className="w-6 h-6 rounded-full bg-stone-700 flex items-center justify-center text-xs text-stone-400 flex-shrink-0 mt-0.5">3</div>
                   <div>
@@ -101,19 +89,16 @@ const Consent: React.FC = () => {
                   </div>
                 </div>
               </div>
-
               <div className="flex items-center gap-2 pt-2 border-t border-stone-700 text-stone-400 text-sm">
                 <Clock size={14} />
                 <span>Estimated time: 10-15 minutes</span>
               </div>
             </div>
-
             <div className="bg-stone-800 border border-stone-600 rounded-xl p-4 text-sm text-stone-300">
               <strong className="text-stone-100">Privacy:</strong> Your responses will be used for research purposes only.
               No personally identifying information will be shared without your consent.
             </div>
           </div>
-
           {/* Actions */}
           <div className="p-6 pt-0 flex gap-3">
             {viewMode !== 'participant' && (
@@ -136,5 +121,4 @@ const Consent: React.FC = () => {
     </div>
   );
 };
-
 export default Consent;
