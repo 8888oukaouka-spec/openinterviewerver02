@@ -1,7 +1,7 @@
 // Gemini AI Provider Implementation
 // Server-side only - uses API key from environment
 
-import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
+import { GoogleGenAI, Type } from '@google/genai';
 import {
   AIProvider,
   buildInterviewSystemPrompt,
@@ -26,48 +26,48 @@ import {
   QuestionProgress,
   AggregateSynthesisResult,
   DEFAULT_GEMINI_MODEL,
-  GEMINI_SYNTHESIS_MODEL
 } from '@/types';
 
-// Thinking budget for 2.5 models (16K tokens)
-const THINKING_BUDGET_25 = 16384;
+// ─── Model constants ────────────────────────────────────────────────────────
+// gemini-3-pro-preview was SHUT DOWN on March 9 2026.
+// We now use gemini-2.5-pro for synthesis (stable, supports thinkingBudget).
+const SYNTHESIS_MODEL = 'gemini-2.5-pro';
+
+// Thinking budgets for gemini-2.5-* models (use thinkingBudget, not ThinkingLevel)
+const THINKING_BUDGET_HIGH = 16384; // synthesis – deep reasoning
+const THINKING_BUDGET_OFF  = 0;     // interview chat – speed first
 
 export class GeminiProvider implements AIProvider {
   private ai: GoogleGenAI;
   private model: string;
 
   constructor(model?: string, apiKey?: string | null) {
-    // Only fall back to env var when apiKey is undefined (not explicitly provided)
-    // In hosted mode, an empty string is passed to prevent env var fallback
     const key = apiKey !== undefined ? (apiKey || undefined) : process.env.GEMINI_API_KEY;
     if (!key) {
       throw new Error('GEMINI_API_KEY is required');
     }
     this.ai = new GoogleGenAI({ apiKey: key });
-    // Priority: constructor param > GEMINI_MODEL env > AI_MODEL env (legacy) > default
     this.model = model ||
       process.env.GEMINI_MODEL ||
       process.env.AI_MODEL ||
       DEFAULT_GEMINI_MODEL;
   }
 
-  // For interview responses (2.5 models) - disable thinking for speed (unless explicitly enabled)
+  // Interview: thinking OFF → fast, natural conversation
   private getInterviewThinkingConfig(enableReasoning?: boolean) {
-    const useReasoning = enableReasoning === true;
     return {
       thinkingConfig: {
-        thinkingBudget: useReasoning ? THINKING_BUDGET_25 : 0
+        thinkingBudget: enableReasoning === true ? THINKING_BUDGET_HIGH : THINKING_BUDGET_OFF
       }
     };
   }
 
-  // For synthesis operations (Gemini 3 Pro) - use thinkingLevel instead of thinkingBudget
+  // Synthesis: thinking ON by default → deeper analysis
+  // Both 2.5 Flash and 2.5 Pro use thinkingBudget (NOT ThinkingLevel)
   private getSynthesisThinkingConfig(enableReasoning?: boolean) {
-    const useReasoning = enableReasoning !== false;
     return {
       thinkingConfig: {
-        // Gemini 3 Pro uses ThinkingLevel enum instead of thinkingBudget
-        thinkingLevel: useReasoning ? ThinkingLevel.HIGH : ThinkingLevel.LOW
+        thinkingBudget: enableReasoning === false ? THINKING_BUDGET_OFF : THINKING_BUDGET_HIGH
       }
     };
   }
@@ -166,7 +166,11 @@ export class GeminiProvider implements AIProvider {
     try {
       const response = await this.ai.models.generateContent({
         model: this.model,
-        contents: prompt
+        contents: prompt,
+        config: {
+          // Greeting is simple — disable thinking for speed
+          thinkingConfig: { thinkingBudget: THINKING_BUDGET_OFF }
+        }
       });
       return response.text || getDefaultGreeting(studyConfig);
     } catch (error) {
@@ -185,7 +189,7 @@ export class GeminiProvider implements AIProvider {
 
     try {
       const response = await this.ai.models.generateContent({
-        model: GEMINI_SYNTHESIS_MODEL,  // Auto-upgrade to best model for reasoning
+        model: SYNTHESIS_MODEL, // gemini-2.5-pro — stable, deep reasoning
         contents: prompt,
         config: {
           ...this.getSynthesisThinkingConfig(studyConfig.enableReasoning),
@@ -248,7 +252,7 @@ export class GeminiProvider implements AIProvider {
 
     try {
       const response = await this.ai.models.generateContent({
-        model: GEMINI_SYNTHESIS_MODEL,  // Auto-upgrade to best model for reasoning
+        model: SYNTHESIS_MODEL,
         contents: prompt,
         config: {
           ...this.getSynthesisThinkingConfig(studyConfig.enableReasoning),
@@ -334,7 +338,7 @@ Return a JSON object with:
 
     try {
       const response = await this.ai.models.generateContent({
-        model: GEMINI_SYNTHESIS_MODEL,  // Auto-upgrade to best model for reasoning
+        model: SYNTHESIS_MODEL,
         contents: prompt,
         config: {
           ...this.getSynthesisThinkingConfig(parentConfig.enableReasoning),
@@ -362,7 +366,6 @@ Return a JSON object with:
       };
     } catch (error) {
       console.error('Gemini follow-up generation error:', error);
-      // Fallback to deterministic generation
       return {
         name: `Follow-up: ${parentConfig.name}`,
         researchQuestion: `What deeper insights emerge from exploring: ${synthesis.keyFindings[0] || 'the findings'}?`,
