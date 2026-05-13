@@ -68,6 +68,7 @@ export interface AIModelOption {
 export const GEMINI_MODELS: AIModelOption[] = [
   { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', desc: 'Fast, cost-effective' },
   { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', desc: 'Higher quality' },
+];
 
 // Available Claude models (verified from official docs)
 export const CLAUDE_MODELS: AIModelOption[] = [
