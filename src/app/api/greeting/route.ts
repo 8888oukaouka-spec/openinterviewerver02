@@ -1,3 +1,5 @@
+export const maxDuration = 60;
+
 // POST /api/greeting - Get interview greeting
 // Server-side only - API keys never sent to client
 // Requires valid participant token to prevent quota abuse
