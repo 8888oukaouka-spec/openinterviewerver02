@@ -51,8 +51,8 @@ const InterviewChat: React.FC = () => {
   } = useStore();
 
   const [input, setInput] = useState('');
-  const [initialized, setInitialized] = useState(false);
   const [showFinishOption, setShowFinishOption] = useState(false);
+  const greetingFetchedRef = useRef(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -68,21 +68,21 @@ const InterviewChat: React.FC = () => {
     }
   }, [questionProgress.currentPhase]);
 
-  // Initialize with greeting
+  // Initialize with greeting - use ref to prevent double-fetch
   useEffect(() => {
-    let mounted = true;
+    if (!studyConfig) return;
+    if (greetingFetchedRef.current) return;
+    
+    // Only fetch greeting if there are no AI messages yet
+    const hasAiMessage = interviewHistory.some(m => m.role === 'ai');
+    if (hasAiMessage) return;
 
-    const initialize = async () => {
-      if (!studyConfig || initialized || interviewHistory.length > 0) return;
+    greetingFetchedRef.current = true;
 
-      setInitialized(true);
+    const fetchGreeting = async () => {
       setAiThinking(true);
-
       try {
         const greeting = await getInterviewGreeting(studyConfig, participantToken);
-
-        if (!mounted) return; // Prevent state update if unmounted
-
         const msg: InterviewMessage = {
           id: `msg-${Date.now()}`,
           role: 'ai',
@@ -91,22 +91,27 @@ const InterviewChat: React.FC = () => {
         };
         addMessage(msg);
       } catch (error) {
-        console.error('Error initializing interview:', error);
+        console.error('Error fetching greeting:', error);
+        // Add fallback greeting so interview can still start
+        const fallbackMsg: InterviewMessage = {
+          id: `msg-${Date.now()}`,
+          role: 'ai',
+          content: `Welcome to the ${studyConfig.name} study! Thank you for participating. To get started, could you tell me a bit about yourself?`,
+          timestamp: Date.now()
+        };
+        addMessage(fallbackMsg);
       } finally {
-        if (mounted) setAiThinking(false);
+        setAiThinking(false);
       }
     };
 
-    initialize();
-
-    return () => { mounted = false; };
-  }, [studyConfig, initialized, interviewHistory.length]);
+    fetchGreeting();
+  }, [studyConfig]);
 
   const handleSend = async (textOverride?: string) => {
     const text = textOverride || input;
     if (!text.trim() || !studyConfig) return;
 
-    // Add user message
     const userMsg: InterviewMessage = {
       id: `msg-${Date.now()}`,
       role: 'user',
@@ -115,11 +120,7 @@ const InterviewChat: React.FC = () => {
     };
     addMessage(userMsg);
     setInput('');
-
-    // Also save to context
     appendContext(text, 'text');
-
-    // Generate AI response
     setAiThinking(true);
 
     try {
@@ -135,13 +136,10 @@ const InterviewChat: React.FC = () => {
         participantToken
       );
 
-      // Handle profile updates
       if (response.profileUpdates && response.profileUpdates.length > 0) {
         response.profileUpdates.forEach(update => {
           updateProfileField(update.fieldId, update.value, update.status);
         });
-
-        // Update raw context with user's background info
         if (questionProgress.currentPhase === 'background') {
           const existingContext = participantProfile?.rawContext || '';
           const newContext = existingContext + (existingContext ? '\n' : '') + text;
@@ -149,17 +147,14 @@ const InterviewChat: React.FC = () => {
         }
       }
 
-      // Handle phase transition
       if (response.phaseTransition) {
         setInterviewPhase(response.phaseTransition);
       }
 
-      // Handle question progress
       if (response.questionAddressed !== null && response.questionAddressed !== undefined) {
         markQuestionAsked(response.questionAddressed);
       }
 
-      // Add AI message
       const aiMsg: InterviewMessage = {
         id: `msg-${Date.now()}`,
         role: 'ai',
@@ -168,7 +163,6 @@ const InterviewChat: React.FC = () => {
       };
       addMessage(aiMsg);
 
-      // Handle interview conclusion
       if (response.shouldConclude) {
         completeInterview();
       }
@@ -203,12 +197,10 @@ const InterviewChat: React.FC = () => {
     );
   }
 
-  // Calculate progress
   const totalQuestions = studyConfig.coreQuestions.length;
   const questionsCompleted = questionProgress.questionsAsked.length;
   const isComplete = questionProgress.isComplete;
 
-  // Progress display
   const getProgressDisplay = () => {
     if (questionProgress.currentPhase === 'background') {
       return phaseLabels['background'];
@@ -221,7 +213,7 @@ const InterviewChat: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen bg-stone-900">
-      {/* Header with Progress */}
+      {/* Header */}
       <div className="h-16 flex items-center justify-between px-6 border-b border-stone-700 bg-stone-900/80 backdrop-blur-md">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-full bg-stone-700 flex items-center justify-center">
@@ -233,7 +225,6 @@ const InterviewChat: React.FC = () => {
           </div>
         </div>
 
-        {/* Progress Dots */}
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-1.5">
             {Array.from({ length: totalQuestions }).map((_, i) => (
@@ -247,8 +238,6 @@ const InterviewChat: React.FC = () => {
               />
             ))}
           </div>
-
-          {/* Subtle finish early option */}
           {showFinishOption && !isComplete && (
             <button
               onClick={handleFinishEarly}
@@ -289,7 +278,7 @@ const InterviewChat: React.FC = () => {
                     <User size={14} />
                   </div>
                 )}
-                <div className={`prose prose-sm max-w-none prose-invert`}>
+                <div className="prose prose-sm max-w-none prose-invert">
                   <ReactMarkdown>{msg.content}</ReactMarkdown>
                 </div>
               </div>
@@ -297,7 +286,6 @@ const InterviewChat: React.FC = () => {
           ))}
         </AnimatePresence>
 
-        {/* Thinking indicator */}
         {isAiThinking && (
           <motion.div
             initial={{ opacity: 0 }}
@@ -316,7 +304,7 @@ const InterviewChat: React.FC = () => {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input Area or Completion UI */}
+      {/* Input or Completion */}
       {isComplete ? (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -354,7 +342,6 @@ const InterviewChat: React.FC = () => {
                 disabled={isAiThinking}
                 className="flex-1 px-4 py-3 bg-stone-900 border border-stone-600 text-stone-100 placeholder-stone-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-stone-500 disabled:opacity-50"
               />
-
               <button
                 onClick={() => handleSend()}
                 disabled={!input.trim() || isAiThinking}
