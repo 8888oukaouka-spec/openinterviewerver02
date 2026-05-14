@@ -1,29 +1,17 @@
 export const maxDuration = 60;
 
 // POST /api/greeting - Get interview greeting
-// Server-side only - API keys never sent to client
-// Requires valid participant token to prevent quota abuse
+// Simplified: uses GEMINI_API_KEY directly in standalone mode
 
 import { NextResponse } from 'next/server';
-import { getInterviewProvider } from '@/lib/providers';
-import { getParticipantRequestContext } from '@/lib/researcherContext';
+import { GoogleGenAI } from '@google/genai';
 import { StudyConfig } from '@/types';
 
 export async function POST(request: Request) {
   try {
-    // Verify participant token and resolve researcher context
-    const { valid, context, studyId, isAdmin, error } = await getParticipantRequestContext(request);
-    if (!valid || !context) {
-      return NextResponse.json(
-        { error: error || 'Valid participant token required' },
-        { status: 401 }
-      );
-    }
-
     const body = await request.json();
     const { studyConfig } = body as { studyConfig: StudyConfig };
 
-    // Validate required fields
     if (!studyConfig) {
       return NextResponse.json(
         { error: 'Missing required field: studyConfig' },
@@ -31,30 +19,40 @@ export async function POST(request: Request) {
       );
     }
 
-    // Verify token's studyId matches the requested study (prevents token reuse across studies)
-    // Skip for admin users (researchers previewing their studies)
-    if (!isAdmin && studyId && studyConfig.id && studyId !== studyConfig.id) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
       return NextResponse.json(
-        { error: 'Token not valid for this study' },
-        { status: 403 }
+        { error: 'GEMINI_API_KEY not configured' },
+        { status: 500 }
       );
     }
 
-    // Get the configured AI provider with researcher's API keys
-    const provider = getInterviewProvider(studyConfig, {
-      geminiApiKey: context.geminiApiKey,
-      anthropicApiKey: context.anthropicApiKey,
+    const ai = new GoogleGenAI({ apiKey });
+    const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+
+    const prompt = `You are starting a research interview for a study called "${studyConfig.name}".
+Research question: ${studyConfig.researchQuestion}
+
+Write a warm, natural opening greeting to welcome the participant and start the interview.
+Keep it to 2-3 sentences. Be friendly and conversational. Do not use quotes around your response.`;
+
+    const response = await ai.models.generateContent({
+      model,
+      contents: prompt,
+      config: {
+        thinkingConfig: { thinkingBudget: 0 }
+      }
     });
 
-    // Generate greeting using the provider
-    const greeting = await provider.getInterviewGreeting(studyConfig);
+    const text = (response.text || '').trim().replace(/^["'\\]+|["'\\]+$/g, '');
+    const greeting = text || `Welcome to the ${studyConfig.name} study! I'm glad you're here. Let's start by having you tell me a bit about yourself.`;
 
     return NextResponse.json({ greeting });
   } catch (error) {
     console.error('Greeting API error:', error);
-    return NextResponse.json(
-      { error: 'Failed to generate greeting' },
-      { status: 500 }
-    );
+    // Return a fallback greeting instead of an error
+    return NextResponse.json({
+      greeting: "Welcome! Thank you for participating in this research study. I'm excited to learn from your experiences. To get started, could you share a bit about yourself?"
+    });
   }
 }
