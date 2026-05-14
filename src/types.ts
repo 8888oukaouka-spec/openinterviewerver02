@@ -66,6 +66,7 @@ export interface AIModelOption {
 
 // Available Gemini models (verified from official docs)
 export const GEMINI_MODELS: AIModelOption[] = [
+  { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', desc: 'Free tier - 1500 req/day' },
   { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', desc: 'Fast, cost-effective' },
   { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', desc: 'Higher quality' },
 ];
@@ -78,7 +79,7 @@ export const CLAUDE_MODELS: AIModelOption[] = [
 ];
 
 // Default models for each provider
-export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+export const DEFAULT_GEMINI_MODEL = 'gemini-2.0-flash';
 export const DEFAULT_CLAUDE_MODEL = 'claude-sonnet-4-5';
 
 // Synthesis models
