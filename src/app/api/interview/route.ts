@@ -1,12 +1,10 @@
 export const maxDuration = 60;
 
 // POST /api/interview - Generate AI interview response
-// Server-side only - API keys never sent to client
-// Requires valid participant token to prevent quota abuse
+// Simplified: uses GEMINI_API_KEY directly in standalone mode
 
 import { NextResponse } from 'next/server';
 import { getInterviewProvider } from '@/lib/providers';
-import { getParticipantRequestContext } from '@/lib/researcherContext';
 import {
   StudyConfig,
   ParticipantProfile,
@@ -14,22 +12,12 @@ import {
   QuestionProgress
 } from '@/types';
 
-// Payload size limits to prevent abuse
 const MAX_HISTORY_MESSAGES = 100;
 const MAX_CONTEXT_LENGTH = 10000;
 const MAX_MESSAGE_LENGTH = 5000;
 
 export async function POST(request: Request) {
   try {
-    // Verify participant token and resolve researcher context
-    const { valid, context, studyId, isAdmin, error } = await getParticipantRequestContext(request);
-    if (!valid || !context) {
-      return NextResponse.json(
-        { error: error || 'Valid participant token required' },
-        { status: 401 }
-      );
-    }
-
     const body = await request.json();
     let {
       history,
@@ -45,10 +33,9 @@ export async function POST(request: Request) {
       currentContext: string;
     };
 
-    // Validate required fields
     if (!history || !studyConfig || !questionProgress) {
       return NextResponse.json(
-        { error: 'Missing required fields: history, studyConfig, questionProgress' },
+        { error: 'Missing required fields' },
         { status: 400 }
       );
     }
@@ -66,22 +53,12 @@ export async function POST(request: Request) {
       };
     }
 
-    // Verify token's studyId matches the requested study (prevents token reuse across studies)
-    // Skip for admin users (researchers previewing their studies)
-    if (!isAdmin && studyId && studyConfig.id && studyId !== studyConfig.id) {
-      return NextResponse.json(
-        { error: 'Token not valid for this study' },
-        { status: 403 }
-      );
-    }
-
-    // Get the configured AI provider with researcher's API keys
+    // Use env var API key directly (standalone mode)
     const provider = getInterviewProvider(studyConfig, {
-      geminiApiKey: context.geminiApiKey,
-      anthropicApiKey: context.anthropicApiKey,
+      geminiApiKey: process.env.GEMINI_API_KEY || null,
+      anthropicApiKey: process.env.ANTHROPIC_API_KEY || null,
     });
 
-    // Generate response using the provider
     const result = await provider.generateInterviewResponse(
       history,
       studyConfig,
