@@ -5,29 +5,29 @@
 // ============================================
 
 export type InterviewPhase =
-  | 'background'      // AI gathers participant context
-  | 'core-questions'  // Working through core research questions
-  | 'exploration'     // Optional deeper exploration
-  | 'feedback'        // Final feedback for researchers
-  | 'wrap-up';        // AI concludes, interview complete
+  | 'background'
+  | 'core-questions'
+  | 'exploration'
+  | 'feedback'
+  | 'wrap-up';
 
 export interface QuestionProgress {
-  questionsAsked: number[];  // Indices of completed questions
+  questionsAsked: number[];
   total: number;
   currentPhase: InterviewPhase;
   isComplete: boolean;
 }
 
 // ============================================
-// Profile Schema - Researcher-defined fields
+// Profile Schema
 // ============================================
 
 export interface ProfileField {
   id: string;
-  label: string;              // e.g., "Current Role"
-  extractionHint: string;     // e.g., "Their job title or position"
+  label: string;
+  extractionHint: string;
   required: boolean;
-  options?: string[];         // Optional preset options for validation
+  options?: string[];
 }
 
 export type ProfileFieldStatus = 'pending' | 'extracted' | 'vague' | 'refused';
@@ -41,8 +41,8 @@ export interface ProfileFieldValue {
 
 export interface ParticipantProfile {
   id: string;
-  fields: ProfileFieldValue[];  // Structured field values
-  rawContext: string;           // Full context summary from conversation
+  fields: ProfileFieldValue[];
+  rawContext: string;
   timestamp: number;
 }
 
@@ -52,7 +52,7 @@ export interface ParticipantProfile {
 
 export type AIBehavior = 'structured' | 'standard' | 'exploratory';
 
-export type AIProviderType = 'gemini' | 'claude';
+export type AIProviderType = 'gemini' | 'claude' | 'openai';
 
 // ============================================
 // AI Model Configuration
@@ -64,26 +64,34 @@ export interface AIModelOption {
   desc: string;
 }
 
-// Available Gemini models (verified from official docs)
+// Available Gemini models
 export const GEMINI_MODELS: AIModelOption[] = [
   { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', desc: 'Free tier - 1500 req/day' },
   { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', desc: 'Fast, cost-effective' },
   { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', desc: 'Higher quality' },
 ];
 
-// Available Claude models (verified from official docs)
+// Available Claude models
 export const CLAUDE_MODELS: AIModelOption[] = [
-  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', desc: 'Fastest ($1/$5 per MTok)' },
-  { id: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5', desc: 'Balanced ($3/$15 per MTok)' },
-  { id: 'claude-opus-4-5', label: 'Claude Opus 4.5', desc: 'Most capable ($15/$75 per MTok)' },
+  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', desc: 'Fastest' },
+  { id: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5', desc: 'Balanced' },
+  { id: 'claude-opus-4-5', label: 'Claude Opus 4.5', desc: 'Most capable' },
 ];
 
-// Default models for each provider
+// Available OpenAI models
+export const OPENAI_MODELS: AIModelOption[] = [
+  { id: 'gpt-4o-mini', label: 'GPT-4o Mini', desc: 'Fast and cheap (~$0.001/interview)' },
+  { id: 'gpt-4o', label: 'GPT-4o', desc: 'Most capable' },
+];
+
+// Default models
 export const DEFAULT_GEMINI_MODEL = 'gemini-2.0-flash';
 export const DEFAULT_CLAUDE_MODEL = 'claude-sonnet-4-5';
+export const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini';
 
 // Synthesis models
 export const CLAUDE_SYNTHESIS_MODEL = 'claude-opus-4-5';
+export const OPENAI_SYNTHESIS_MODEL = 'gpt-4o';
 
 // Link expiration options
 export type LinkExpirationOption = 'never' | '7days' | '30days' | '90days';
@@ -94,22 +102,19 @@ export interface StudyConfig {
   description: string;
   researchQuestion: string;
   coreQuestions: string[];
-  topicAreas: string[];           // General topic areas for synthesis
-  profileSchema: ProfileField[];  // Fields to collect during interview
+  topicAreas: string[];
+  profileSchema: ProfileField[];
   aiBehavior: AIBehavior;
-  aiProvider?: AIProviderType;    // Optional, defaults to env or 'gemini'
-  aiModel?: string;               // Optional, defaults to provider-specific env or default
+  aiProvider?: AIProviderType;
+  aiModel?: string;
   consentText: string;
   createdAt: number;
-  // Follow-up study lineage
-  parentStudyId?: string;         // ID of parent study if this is a follow-up
-  parentStudyName?: string;       // Name of parent study for display
-  generatedFrom?: 'synthesis' | 'manual';  // How this study was created
-  // Link management
-  linksEnabled?: boolean;         // Whether participant links are active (default: true)
-  linkExpiration?: LinkExpirationOption;  // When links expire (default: 'never')
-  // AI Reasoning
-  enableReasoning?: boolean;      // undefined=auto, true=force on, false=force off
+  parentStudyId?: string;
+  parentStudyName?: string;
+  generatedFrom?: 'synthesis' | 'manual';
+  linksEnabled?: boolean;
+  linkExpiration?: LinkExpirationOption;
+  enableReasoning?: boolean;
 }
 
 // ============================================
@@ -148,11 +153,11 @@ export interface SynthesisResult {
 // ============================================
 
 export type AppStep =
-  | 'setup'        // Researcher configures study
-  | 'consent'      // Participant sees consent + foreshadowing
-  | 'interview'    // Main interview chat (includes background gathering)
-  | 'synthesis'    // Analysis results
-  | 'export';      // Export data
+  | 'setup'
+  | 'consent'
+  | 'interview'
+  | 'synthesis'
+  | 'export';
 
 export type ViewMode = 'researcher' | 'participant';
 
@@ -164,19 +169,19 @@ export interface ContextEntry {
 }
 
 // ============================================
-// AI Response Structure (for API routes)
+// AI Response Structure
 // ============================================
 
 export interface AIInterviewResponse {
   message: string;
-  questionAddressed: number | null;     // Which core question was covered (0-indexed)
-  phaseTransition: InterviewPhase | null;  // If moving to new phase
+  questionAddressed: number | null;
+  phaseTransition: InterviewPhase | null;
   profileUpdates: {
     fieldId: string;
     value: string | null;
     status: 'extracted' | 'vague' | 'refused';
   }[];
-  shouldConclude: boolean;              // AI signals interview should end
+  shouldConclude: boolean;
 }
 
 // ============================================
@@ -205,11 +210,11 @@ export interface ParticipantToken {
   studyConfig: StudyConfig;
   createdAt: number;
   expiresAt?: number;
-  researcherId?: string;  // Present in hosted mode for researcher context resolution
+  researcherId?: string;
 }
 
 // ============================================
-// Researcher Account (Platform DB - Hosted Mode)
+// Researcher Account (Hosted Mode)
 // ============================================
 
 export interface ResearcherAccount {
@@ -222,17 +227,13 @@ export interface ResearcherAccount {
   createdAt: number;
   lastLoginAt: number;
   onboardingComplete: boolean;
-
-  // Encrypted credentials — never sent to client
   encryptedRedisUrl: string | null;
   encryptedRedisToken: string | null;
   encryptedGeminiApiKey: string | null;
   encryptedAnthropicApiKey: string | null;
-
   redisConfiguredAt: number | null;
 }
 
-// Safe subset for client-side display
 export interface ResearcherProfile {
   id: string;
   email: string;
@@ -249,16 +250,16 @@ export interface ResearcherProfile {
 // ============================================
 
 export interface StoredStudy {
-  id: string;                    // Server-assigned UUID
-  config: StudyConfig;           // Full study configuration
+  id: string;
+  config: StudyConfig;
   createdAt: number;
   updatedAt: number;
-  interviewCount: number;        // Cached count for dashboard display
-  isLocked: boolean;             // True after first interview collected
+  interviewCount: number;
+  isLocked: boolean;
 }
 
 // ============================================
-// Aggregate Synthesis (Cross-Interview)
+// Aggregate Synthesis
 // ============================================
 
 export interface AggregateSynthesisResult {
@@ -268,6 +269,6 @@ export interface AggregateSynthesisResult {
   divergentViews: { topic: string; viewA: string; viewB: string }[];
   keyFindings: string[];
   researchImplications: string[];
-  bottomLine: string;           // One-paragraph summary of all interviews
+  bottomLine: string;
   generatedAt: number;
 }
