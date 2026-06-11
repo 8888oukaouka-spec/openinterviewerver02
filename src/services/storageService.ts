@@ -1,7 +1,44 @@
 // Storage Service - Client-side interface for interview storage
 // Calls API routes which interact with Vercel KV
 
-import { StoredInterview, StoredStudy } from '@/types';
+import {
+  StoredInterview,
+  StoredStudy,
+  StudyConfig,
+  ParticipantProfile,
+  InterviewMessage,
+  BehaviorData,
+  SynthesisResult
+} from '@/types';
+
+// Build the interview record from the current session state.
+// Kept in one place so the completion screen (transcript-only) and the
+// synthesis screen (transcript + synthesis) write to the SAME interview id,
+// making the synthesis save an idempotent upsert over the initial save.
+export function buildInterviewRecord(args: {
+  studyConfig: StudyConfig;
+  participantProfile: ParticipantProfile | null;
+  transcript: InterviewMessage[];
+  behaviorData: BehaviorData;
+  synthesis: SynthesisResult | null;
+}): Omit<StoredInterview, 'completedAt' | 'status'> {
+  const interviewId = args.participantProfile?.id || `interview-${Date.now()}`;
+  return {
+    id: interviewId,
+    studyId: args.studyConfig.id,
+    studyName: args.studyConfig.name,
+    participantProfile: args.participantProfile || {
+      id: interviewId,
+      fields: [],
+      rawContext: '',
+      timestamp: Date.now()
+    },
+    transcript: args.transcript,
+    synthesis: args.synthesis,
+    behaviorData: args.behaviorData,
+    createdAt: args.participantProfile?.timestamp || Date.now()
+  };
+}
 
 // Save completed interview
 export async function saveCompletedInterview(
@@ -33,6 +70,64 @@ export async function saveCompletedInterview(
     console.error('Error saving interview:', error);
     return { success: false, id: '' };
   }
+}
+
+// Researcher-only: generate the synthesis for a stored interview and persist it.
+// Synthesis is no longer produced during the participant flow, so the researcher
+// triggers it on demand from the dashboard. Uses the admin session cookie (no
+// participant token). Throws on failure so the caller can offer a retry.
+export async function generateInterviewSynthesis(
+  interview: StoredInterview
+): Promise<StoredInterview> {
+  // The synthesis endpoint needs the full study config, which isn't stored on
+  // the interview record — fetch it by studyId.
+  const study = await getStudy(interview.studyId);
+  if (!study) {
+    throw new Error('Study configuration not found for this interview.');
+  }
+
+  const response = await fetch('/api/synthesis', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      history: interview.transcript,
+      studyConfig: study.config,
+      behaviorData: interview.behaviorData,
+      participantProfile: interview.participantProfile
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Analysis failed (status ${response.status}). Please try again.`);
+  }
+
+  const synthesis = (await response.json()) as SynthesisResult;
+
+  // The AI providers swallow errors (e.g. a 503 overload) and return a
+  // placeholder synthesis with a sentinel bottomLine instead of failing the
+  // request. Detect that so we don't save an empty analysis or claim success.
+  // Sentinel matches `defaultSynthesisResult` in src/lib/ai.ts.
+  if (!synthesis || synthesis.bottomLine === 'Interview synthesis in progress.') {
+    throw new Error('The AI was unavailable (it may be overloaded). Please try again in a moment.');
+  }
+
+  // Upsert the SAME interview record (preserve its exact id) with the synthesis.
+  const saveResult = await saveCompletedInterview({
+    id: interview.id,
+    studyId: interview.studyId,
+    studyName: interview.studyName,
+    participantProfile: interview.participantProfile,
+    transcript: interview.transcript,
+    synthesis,
+    behaviorData: interview.behaviorData,
+    createdAt: interview.createdAt
+  });
+
+  if (!saveResult.success) {
+    throw new Error('Generated the analysis but could not save it. Please try again.');
+  }
+
+  return { ...interview, synthesis };
 }
 
 // Get all interviews (researcher only)

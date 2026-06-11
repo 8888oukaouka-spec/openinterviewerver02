@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import { StoredInterview } from '@/types';
-import { getInterview } from '@/services/storageService';
+import { getInterview, generateInterviewSynthesis } from '@/services/storageService';
 import ReactMarkdown from 'react-markdown';
 import {
   Loader2,
@@ -17,7 +17,8 @@ import {
   Target,
   TrendingUp,
   Lightbulb,
-  AlertTriangle
+  AlertTriangle,
+  Sparkles
 } from 'lucide-react';
 
 interface InterviewDetailProps {
@@ -29,6 +30,8 @@ const InterviewDetail: React.FC<InterviewDetailProps> = ({ interviewId }) => {
   const [interview, setInterview] = useState<StoredInterview | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'transcript' | 'analysis'>('transcript');
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
 
   useEffect(() => {
     loadInterview();
@@ -43,6 +46,23 @@ const InterviewDetail: React.FC<InterviewDetailProps> = ({ interviewId }) => {
       console.error('Error loading interview:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleGenerateAnalysis = async () => {
+    if (!interview || generating) return;
+    setGenerating(true);
+    setGenerateError(null);
+    try {
+      const updated = await generateInterviewSynthesis(interview);
+      setInterview(updated);
+    } catch (error) {
+      console.error('Error generating analysis:', error);
+      setGenerateError(
+        error instanceof Error ? error.message : 'Could not generate analysis. Please try again.'
+      );
+    } finally {
+      setGenerating(false);
     }
   };
 
@@ -400,9 +420,37 @@ const InterviewDetail: React.FC<InterviewDetailProps> = ({ interviewId }) => {
               </>
             ) : (
               <div className="bg-stone-800/50 rounded-xl border border-stone-700 p-12 text-center">
-                <p className="text-stone-400">
-                  No analysis available for this interview.
+                <div className="w-16 h-16 rounded-full bg-stone-700 flex items-center justify-center mx-auto mb-4">
+                  <Sparkles size={28} className="text-stone-300" />
+                </div>
+                <h3 className="text-lg font-semibold text-white mb-2">
+                  No analysis yet
+                </h3>
+                <p className="text-stone-400 mb-6 max-w-md mx-auto">
+                  Generate an AI synthesis of this interview — themes, stated vs. revealed
+                  preferences, contradictions, and key insights.
                 </p>
+                {generateError && (
+                  <div className="bg-yellow-900/30 border border-yellow-700 text-yellow-300 rounded-xl p-3 mb-4 max-w-md mx-auto text-sm flex items-center gap-2 justify-center">
+                    <AlertTriangle size={16} />
+                    <span>{generateError}</span>
+                  </div>
+                )}
+                <button
+                  onClick={handleGenerateAnalysis}
+                  disabled={generating}
+                  className="px-6 py-3 bg-stone-600 hover:bg-stone-500 text-white font-medium rounded-xl transition-colors flex items-center gap-2 mx-auto disabled:opacity-50"
+                >
+                  {generating ? (
+                    <>
+                      <Loader2 size={18} className="animate-spin" /> Analyzing…
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={18} /> {generateError ? 'Retry Analysis' : 'Generate Analysis'}
+                    </>
+                  )}
+                </button>
               </div>
             )}
           </motion.div>

@@ -8,6 +8,7 @@ import {
   generateInterviewResponse,
   getInterviewGreeting
 } from '@/services/geminiService';
+import { saveCompletedInterview, buildInterviewRecord } from '@/services/storageService';
 import { InterviewMessage, InterviewPhase } from '@/types';
 import ReactMarkdown from 'react-markdown';
 import {
@@ -17,6 +18,7 @@ import {
   ArrowRight,
   MessageSquare,
   CheckCircle,
+  AlertTriangle,
   User
 } from 'lucide-react';
 
@@ -33,9 +35,14 @@ const InterviewChat: React.FC = () => {
   const router = useRouter();
   const {
     studyConfig,
+    viewMode,
     participantProfile,
     questionProgress,
     interviewHistory,
+    behaviorData,
+    synthesis,
+    saveStatus,
+    setSaveStatus,
     addMessage,
     setStep,
     isAiThinking,
@@ -67,6 +74,32 @@ const InterviewChat: React.FC = () => {
       setShowFinishOption(true);
     }
   }, [questionProgress.currentPhase]);
+
+  // Persist the interview the moment it completes, independent of synthesis.
+  // This guarantees the raw transcript is saved even if synthesis later fails
+  // (e.g. the AI provider is overloaded). The synthesis screen upserts the
+  // same record with the analysis attached once it succeeds.
+  useEffect(() => {
+    if (!questionProgress.isComplete || !studyConfig) return;
+    if (saveStatus !== 'idle') return; // only attempt the initial save once
+
+    const persistTranscript = async () => {
+      setSaveStatus('saving');
+      const record = buildInterviewRecord({
+        studyConfig,
+        participantProfile,
+        transcript: interviewHistory,
+        behaviorData,
+        synthesis
+      });
+      const result = await saveCompletedInterview(record, participantToken);
+      setSaveStatus(result.success ? 'saved' : 'failed');
+    };
+
+    persistTranscript();
+    // Only react to completion flipping true; other values are read at that moment.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [questionProgress.isComplete]);
 
   // Initialize with greeting - use ref to prevent double-fetch
   useEffect(() => {
@@ -313,20 +346,36 @@ const InterviewChat: React.FC = () => {
         >
           <div className="max-w-md mx-auto text-center space-y-4">
             <div className="w-12 h-12 rounded-full bg-stone-700 flex items-center justify-center mx-auto">
-              <CheckCircle size={24} className="text-stone-300" />
+              {saveStatus === 'failed' ? (
+                <AlertTriangle size={24} className="text-yellow-400" />
+              ) : saveStatus === 'saving' ? (
+                <Loader2 size={24} className="text-stone-300 animate-spin" />
+              ) : (
+                <CheckCircle size={24} className="text-stone-300" />
+              )}
             </div>
             <div>
               <h3 className="text-lg font-semibold text-white">Interview Complete</h3>
               <p className="text-sm text-stone-400 mt-1">
-                Your responses have been saved. Thank you for participating.
+                {saveStatus === 'saving'
+                  ? 'Saving your responses…'
+                  : saveStatus === 'saved'
+                  ? 'Your responses have been saved. Thank you for participating.'
+                  : saveStatus === 'failed'
+                  ? "We couldn't save your responses just now. Please let the researcher know before closing this page."
+                  : 'Thank you for participating.'}
               </p>
             </div>
-            <button
-              onClick={handleViewAnalysis}
-              className="px-6 py-3 bg-stone-600 hover:bg-stone-500 text-white font-medium rounded-xl transition-colors flex items-center gap-2 mx-auto"
-            >
-              View Analysis <ArrowRight size={18} />
-            </button>
+            {/* Analysis is researcher-only — viewed in the dashboard.
+                Participants end here with a thank-you. */}
+            {viewMode === 'researcher' && (
+              <button
+                onClick={handleViewAnalysis}
+                className="px-6 py-3 bg-stone-600 hover:bg-stone-500 text-white font-medium rounded-xl transition-colors flex items-center gap-2 mx-auto"
+              >
+                View Analysis <ArrowRight size={18} />
+              </button>
+            )}
           </div>
         </motion.div>
       ) : (

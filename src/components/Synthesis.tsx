@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { useStore } from '@/store';
 import { synthesizeInterview } from '@/services/geminiService';
-import { saveCompletedInterview } from '@/services/storageService';
+import { saveCompletedInterview, buildInterviewRecord } from '@/services/storageService';
 import {
   Loader2,
   ArrowRight,
@@ -30,6 +30,7 @@ const Synthesis: React.FC = () => {
     synthesis,
     setSynthesis,
     setStep,
+    setSaveStatus: setGlobalSaveStatus,
     participantToken
   } = useStore();
 
@@ -44,34 +45,32 @@ const Synthesis: React.FC = () => {
   // Counter to trigger re-analysis when retry is clicked
   const [retryTrigger, setRetryTrigger] = useState(0);
 
-  // Extract save logic into a reusable function for retry
+  // Extract save logic into a reusable function for retry.
+  // synthesisToSave may be null: we still persist the transcript so an interview
+  // is never lost when synthesis fails. A later save with synthesis upserts the
+  // same record (the id is derived from the participant profile).
   const doSave = async (synthesisToSave: typeof synthesis) => {
-    if (!studyConfig || !synthesisToSave) return;
+    if (!studyConfig) return;
 
     setIsSaving(true);
     setSaveStatus('pending');
+    setGlobalSaveStatus('saving');
     try {
-      const interviewId = participantProfile?.id || `interview-${Date.now()}`;
-      const saveResult = await saveCompletedInterview({
-        id: interviewId,
-        studyId: studyConfig.id,
-        studyName: studyConfig.name,
-        participantProfile: participantProfile || {
-          id: interviewId,
-          fields: [],
-          rawContext: '',
-          timestamp: Date.now()
-        },
+      const record = buildInterviewRecord({
+        studyConfig,
+        participantProfile,
         transcript: interviewHistory,
-        synthesis: synthesisToSave,
-        behaviorData: behaviorData,
-        createdAt: participantProfile?.timestamp || Date.now()
-      }, participantToken);
+        behaviorData,
+        synthesis: synthesisToSave
+      });
+      const saveResult = await saveCompletedInterview(record, participantToken);
 
       setSaveStatus(saveResult.success ? 'saved' : 'failed');
+      setGlobalSaveStatus(saveResult.success ? 'saved' : 'failed');
     } catch (error) {
       console.error('Error saving interview:', error);
       setSaveStatus('failed');
+      setGlobalSaveStatus('failed');
     } finally {
       setIsSaving(false);
     }
@@ -125,7 +124,13 @@ const Synthesis: React.FC = () => {
       } catch (error) {
         console.error('Error synthesizing interview:', error);
         setAnalysisError(true);
-        hasAttemptedAnalysis.current = false;  // Allow retry
+        // Keep hasAttemptedAnalysis = true so the effect doesn't auto-rerun
+        // synthesis when the save below changes saveStatus. The "Retry Analysis"
+        // button resets the flag for an explicit retry.
+        // Synthesis failed (e.g. AI provider overloaded) — still persist the
+        // raw transcript so the interview isn't lost. A later successful
+        // analysis upserts the same record with the synthesis attached.
+        await doSave(null);
       } finally {
         setIsAnalyzing(false);
       }

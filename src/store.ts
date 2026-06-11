@@ -17,6 +17,11 @@ import {
   ProfileField
 } from './types';
 
+// Persistence status for the completed interview, shared between the
+// interview-completion screen and the synthesis screen so both reflect
+// the actual result of writing to storage.
+export type SaveStatus = 'idle' | 'saving' | 'saved' | 'failed';
+
 // Example Study: "The Adaptive Self"
 const EXAMPLE_STUDY: Omit<StudyConfig, 'id' | 'createdAt'> = {
   name: 'The Adaptive Self: Professional Identity in the Age of AI',
@@ -102,6 +107,9 @@ interface ResearchState {
   // Synthesis
   synthesis: SynthesisResult | null;
 
+  // Persistence status of the completed interview
+  saveStatus: SaveStatus;
+
   // Context
   contextEntries: ContextEntry[];
   streamingMessage: string | null;
@@ -141,6 +149,9 @@ interface ResearchState {
   // Actions - Synthesis
   setSynthesis: (result: SynthesisResult) => void;
 
+  // Actions - Persistence status
+  setSaveStatus: (status: SaveStatus) => void;
+
   // Actions - Behavior Data
   setBehaviorData: (data: BehaviorData) => void;
 
@@ -166,6 +177,7 @@ export const useStore = create<ResearchState>()(
       interviewHistory: [],
       behaviorData: initialBehaviorData,
       synthesis: null,
+      saveStatus: 'idle',
       contextEntries: [],
       streamingMessage: null,
       isAiThinking: false,
@@ -294,6 +306,8 @@ export const useStore = create<ResearchState>()(
 
       setSynthesis: (result) => set({ synthesis: result }),
 
+      setSaveStatus: (status) => set({ saveStatus: status }),
+
       setBehaviorData: (data) => set({ behaviorData: data }),
 
       setParticipantToken: (token) => set({ participantToken: token }),
@@ -310,6 +324,7 @@ export const useStore = create<ResearchState>()(
         interviewHistory: [],
         behaviorData: initialBehaviorData,
         synthesis: null,
+        saveStatus: 'idle',
         contextEntries: [],
         streamingMessage: null,
         isAiThinking: false,
@@ -324,6 +339,7 @@ export const useStore = create<ResearchState>()(
         interviewHistory: [],
         behaviorData: initialBehaviorData,
         synthesis: null,
+        saveStatus: 'idle',
         contextEntries: [],
         currentStep: state.studyConfig ? 'consent' : 'setup'
       }))
