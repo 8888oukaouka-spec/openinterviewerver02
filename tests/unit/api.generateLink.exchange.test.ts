@@ -87,6 +87,7 @@ describe('GET /api/generate-link participant-session exchange', () => {
     expect(responseB.status).toBe(200);
     expect(bodyA.data.sessionHandle).toBe(handleA);
     expect(bodyB.data.sessionHandle).toBe(handleB);
+    expect(bodyA.data.aiTransport).toBe('direct');
     expect(cookieA).toContain(`participant-session-${handleA}=`);
     expect(cookieB).toContain(`participant-session-${handleB}=`);
     expect(cookieA).toContain('HttpOnly');

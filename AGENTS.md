@@ -44,7 +44,7 @@ The sample-workspace seed is not the public demo. `/demo` is component-memory-on
 - Page protection: `src/proxy.ts`, `src/lib/researcherAccess.ts`
 - Researcher/participant request contexts: `src/lib/researcherContext.ts`
 
-`standalone` uses one administrator session plus deployment-owned provider and Upstash credentials. `hosted` uses OAuth accounts, a platform control-plane Redis database, encrypted researcher BYOS credentials, and a distinct researcher-owned Redis database for research records.
+`standalone` uses one administrator session plus deployment-owned Upstash credentials and either direct provider keys or Vercel AI Gateway/OIDC. `hosted` uses OAuth accounts, a platform control-plane Redis database, encrypted researcher BYOS credentials, direct native provider adapters, and a distinct researcher-owned Redis database for research records.
 
 ### Storage and tenancy
 
@@ -64,6 +64,7 @@ Hosted study create/delete is a durable cross-database operation. Preserve the o
 - Synthesis/save binding: `src/lib/synthesisReceipt.ts`, `src/lib/interviewSubmission.ts`
 - Bounded request parsing: `src/lib/requestBody.ts`
 - Providers and prompts: `src/lib/providers/`, `src/lib/prompts/`, `src/lib/ai.ts`
+- Transport selection and Gateway model mapping: `src/lib/aiTransport.ts`, `src/lib/providers/gateway.ts`
 - Provider result validation/errors: `src/lib/providerValidation.ts`, `src/lib/providerErrors.ts`
 - Participant and hosted platform limits: `src/lib/rateLimit.ts`, `src/lib/platformAiRateLimit.ts`
 - Browser API clients: `src/services/`
@@ -81,6 +82,7 @@ The participant sequence is link exchange -> HttpOnly participant session -> con
 - Researcher preview may call the real provider but must not persist or increment study results.
 - Study revision, link status, ownership, consent, rate limits, and storage uncertainty fail closed.
 - Hosted provider resolution must never fall back to platform-owner API keys.
+- Hosted researcher BYOS remains on `AI_TRANSPORT=direct`. Standalone Gateway requests pin one creator endpoint, configure no model fallback, and keep actual execution provenance.
 - User-provided Redis URLs remain restricted to HTTPS Upstash hosts; preserve bounded validation deadlines.
 - AI/provider failure is an error. Never substitute a plausible research response, synthesis, or greeting.
 - Completion persistence and study mutation remain atomic and idempotent under retries and concurrency.
@@ -95,7 +97,7 @@ The participant sequence is link exchange -> HttpOnly participant session -> con
 | Mode/setup | `mode.ts`, `hostedConfig.ts`, checker/env/docs | mode/config/setup tests + standalone and hosted builds |
 | Auth/participant authority | `auth.ts`, `proxy.ts`, `researcherContext.ts`, participant libraries | matching auth/consent/link tests + `npm run check` |
 | Storage/tenancy | `kv.ts`, `kvClient.ts`, `platformDb.ts`, reconciler | atomicity/tenancy/saga tests + `npm run check` |
-| Providers/provenance | `providers/`, `prompts/`, interview/synthesis routes | provider/provenance tests + `npm run check` |
+| Providers/provenance | `aiTransport.ts`, `providers/`, `prompts/`, interview/synthesis routes | transport/provider/provenance tests + direct/Gateway build contracts + `npm run check` |
 | Researcher UI | components, services, page entry | paired component/API tests; inspect 375px when layout changes |
 
 Tests live in `tests/unit/` and mirror the security or product boundary they protect. Prefer a realistic regression at that boundary over snapshots of implementation detail.

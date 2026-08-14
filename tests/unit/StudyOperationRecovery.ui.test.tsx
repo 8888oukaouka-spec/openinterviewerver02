@@ -38,6 +38,7 @@ beforeEach(() => {
     setStep: vi.fn(),
     loadExampleStudy: vi.fn(),
     setViewMode: vi.fn(),
+    setAiTransport: vi.fn(),
   };
 });
 
@@ -78,7 +79,7 @@ describe('hosted study operation recovery UI', () => {
         });
       }
       if (path === '/api/config/status') {
-        return new Response(JSON.stringify({ mode: 'hosted', hasAnthropicKey: true, hasGeminiKey: true }), {
+        return new Response(JSON.stringify({ mode: 'hosted', aiTransport: 'direct', hasAnthropicKey: true, hasGeminiKey: true }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });

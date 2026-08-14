@@ -22,8 +22,8 @@ export default function SelfHostPage() {
           <h1 className="text-3xl font-bold">Your deployment, credentials, and storage</h1>
           <p className="text-stone-400">
             Standalone mode keeps researcher credentials in your server environment. It needs Node 24.15+,
-            one Google Gemini, Anthropic Claude, OpenAI, or OpenRouter key, an Upstash Redis REST URL and
-            token, and four independent secrets.
+            either Vercel AI Gateway access or one Google Gemini, Anthropic Claude, OpenAI, or OpenRouter key,
+            an Upstash Redis REST URL and token, and four independent secrets.
           </p>
         </section>
 

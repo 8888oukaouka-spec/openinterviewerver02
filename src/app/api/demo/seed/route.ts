@@ -10,6 +10,12 @@ import { configurationRequiredResponse } from '@/lib/researcherAccess';
 import { saveStudy, saveInterview, isKVAvailable, getAllStudies } from '@/lib/kv';
 import { DEMO_STUDIES, DEMO_INTERVIEWS } from '@/lib/demoData';
 import { DEFAULT_MODEL_BY_PROVIDER } from '@/lib/providerRegistry';
+import {
+  isGatewayAuthConfigured,
+  isGatewayProvider,
+  resolveAITransport,
+} from '@/lib/aiTransport';
+import { isHostedMode } from '@/lib/mode';
 
 export async function POST() {
   try {
@@ -39,18 +45,24 @@ export async function POST() {
       );
     }
 
-    const aiProvider = context.geminiApiKey?.trim()
-      ? 'gemini'
-      : context.anthropicApiKey?.trim()
-        ? 'claude'
-        : context.openaiApiKey?.trim()
-          ? 'openai'
-          : context.openrouterApiKey?.trim()
-            ? 'openrouter'
-            : null;
+    const configuredGatewayProvider = process.env.AI_PROVIDER?.trim() || 'gemini';
+    const aiProvider = !isHostedMode()
+      && resolveAITransport() === 'gateway'
+      && isGatewayAuthConfigured()
+      && isGatewayProvider(configuredGatewayProvider)
+      ? configuredGatewayProvider
+      : context.geminiApiKey?.trim()
+        ? 'gemini'
+        : context.anthropicApiKey?.trim()
+          ? 'claude'
+          : context.openaiApiKey?.trim()
+            ? 'openai'
+            : context.openrouterApiKey?.trim()
+              ? 'openrouter'
+              : null;
     if (!aiProvider) {
       return NextResponse.json(
-        { error: 'AI provider not configured. Add an AI provider key before loading sample workspace data.' },
+        { error: 'AI provider not configured. Configure the active AI transport before loading sample workspace data.' },
         { status: 503 }
       );
     }

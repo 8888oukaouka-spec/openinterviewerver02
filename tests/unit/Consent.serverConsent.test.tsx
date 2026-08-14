@@ -50,6 +50,19 @@ describe('Consent server recording', () => {
     expect(screen.getByText(/retention, access, and deletion details/i)).toBeInTheDocument();
   });
 
+  it('discloses Vercel AI Gateway and the pinned upstream provider', () => {
+    useStore.getState().beginParticipantSession(
+      makeStudyConfig({ id: 'study-gateway', aiProvider: 'openai', aiModel: 'gpt-5.6-terra' }),
+      'participant-handle-gateway-123456',
+      'gateway',
+    );
+
+    render(<Consent />);
+
+    expect(screen.getByText(/sent through Vercel AI Gateway to OpenAI/i)).toBeInTheDocument();
+    expect(screen.getByText(/model fallback is disabled/i)).toBeInTheDocument();
+  });
+
   it('submits the tab session selector and uses the server-issued timestamp', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       success: true,

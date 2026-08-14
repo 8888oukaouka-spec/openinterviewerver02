@@ -102,8 +102,9 @@ describe('participant session isolation', () => {
     expect(useStore.getState()).not.toHaveProperty('participantToken');
     expect(useStore.getState().participantSessionHandle).toBe('participant-handle-a-123456');
     const migrated = JSON.parse(sessionStorage.getItem('research-tool-storage') || '{}');
-    expect(migrated.version).toBe(4);
+    expect(migrated.version).toBe(5);
     expect(migrated.state).not.toHaveProperty('participantToken');
+    expect(migrated.state.aiTransport).toBe('direct');
   });
 
   it('keeps real participant and researcher preview modes distinct', () => {
@@ -115,5 +116,17 @@ describe('participant session isolation', () => {
 
     useStore.getState().setViewMode('preview');
     expect(useStore.getState().viewMode).toBe('preview');
+  });
+
+  it('binds the participant view to the non-secret deployment transport disclosure', () => {
+    useStore.getState().beginParticipantSession(
+      makeStudyConfig({ id: 'study-gateway', name: 'Gateway Study' }),
+      'participant-handle-gateway-123456',
+      'gateway',
+    );
+
+    expect(useStore.getState().aiTransport).toBe('gateway');
+    const persisted = JSON.parse(sessionStorage.getItem('research-tool-storage') || '{}');
+    expect(persisted.state.aiTransport).toBe('gateway');
   });
 });

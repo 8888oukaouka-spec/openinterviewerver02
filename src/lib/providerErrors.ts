@@ -50,6 +50,8 @@ export function logProviderFailure(provider: string, operation: string, err: unk
   };
   if (err && typeof err === 'object' && 'status' in err && typeof err.status === 'number') {
     safe.status = err.status;
+  } else if (err && typeof err === 'object' && 'statusCode' in err && typeof err.statusCode === 'number') {
+    safe.status = err.statusCode;
   }
   console.error('AI provider failure', safe);
 }
@@ -59,6 +61,9 @@ export function logProviderFailure(provider: string, operation: string, err: unk
 function errorStatus(err: unknown): number | undefined {
   if (err && typeof err === 'object' && 'status' in err && typeof err.status === 'number') {
     return err.status;
+  }
+  if (err && typeof err === 'object' && 'statusCode' in err && typeof err.statusCode === 'number') {
+    return err.statusCode;
   }
   if (err && typeof err === 'object' && 'code' in err) {
     const code = (err as { code?: unknown }).code;

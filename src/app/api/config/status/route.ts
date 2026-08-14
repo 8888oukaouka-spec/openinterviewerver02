@@ -1,5 +1,5 @@
-// GET /api/config/status - Returns which optional API keys are configured
-// Only returns boolean status, never actual key values
+// GET /api/config/status - Returns provider availability for the active transport.
+// Only returns non-secret booleans and transport identity, never key values.
 
 export const dynamic = 'force-dynamic';
 
@@ -7,6 +7,7 @@ import { NextResponse } from 'next/server';
 import { getHostedResearcherIdentity, getRequestContext } from '@/lib/researcherContext';
 import { isHostedMode } from '@/lib/mode';
 import { getResearcherByIdChecked, toResearcherProfile } from '@/lib/platformDb';
+import { isGatewayAuthConfigured, resolveAITransport } from '@/lib/aiTransport';
 
 export async function GET() {
   try {
@@ -35,6 +36,7 @@ export async function GET() {
       const profile = toResearcherProfile(loaded.researcher);
       return NextResponse.json({
         mode: 'hosted',
+        aiTransport: 'direct',
         hasAnthropicKey: profile.hasAnthropicKey,
         hasGeminiKey: profile.hasGeminiKey,
         hasOpenAiKey: profile.hasOpenAiKey,
@@ -50,12 +52,15 @@ export async function GET() {
     // Return researcher-specific key status from context
     // In standalone mode, these come from env vars
     // In hosted mode, these come from the researcher's decrypted credentials
+    const aiTransport = resolveAITransport();
+    const gatewayReady = aiTransport === 'gateway' && isGatewayAuthConfigured();
     const status = {
       mode: 'standalone',
-      hasAnthropicKey: !!context.anthropicApiKey,
-      hasGeminiKey: !!context.geminiApiKey,
-      hasOpenAiKey: !!context.openaiApiKey,
-      hasOpenRouterKey: !!context.openrouterApiKey,
+      aiTransport,
+      hasAnthropicKey: gatewayReady || !!context.anthropicApiKey,
+      hasGeminiKey: gatewayReady || !!context.geminiApiKey,
+      hasOpenAiKey: gatewayReady || !!context.openaiApiKey,
+      hasOpenRouterKey: aiTransport === 'direct' && !!context.openrouterApiKey,
     };
 
     return NextResponse.json(status);

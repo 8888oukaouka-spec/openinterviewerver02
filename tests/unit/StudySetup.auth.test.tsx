@@ -36,12 +36,14 @@ const fetchMock = vi.hoisted(() => ({
   authenticated: false,
   configStatus: {
     mode: 'hosted' as 'hosted' | 'standalone',
+    aiTransport: 'direct' as 'direct' | 'gateway',
     hasAnthropicKey: true,
     hasGeminiKey: true,
     hasOpenAiKey: true,
     hasOpenRouterKey: true,
   } as {
     mode: 'hosted' | 'standalone';
+    aiTransport: 'direct' | 'gateway';
     hasAnthropicKey: boolean;
     hasGeminiKey: boolean;
     hasOpenAiKey?: boolean;
@@ -56,6 +58,7 @@ beforeEach(() => {
   fetchMock.authenticated = false;
   fetchMock.configStatus = {
     mode: 'hosted',
+    aiTransport: 'direct',
     hasAnthropicKey: true,
     hasGeminiKey: true,
     hasOpenAiKey: true,
@@ -91,6 +94,7 @@ beforeEach(() => {
     setStep: vi.fn(),
     loadExampleStudy: vi.fn(),
     setViewMode: vi.fn(),
+    setAiTransport: vi.fn(),
     resetParticipant: vi.fn(),
   });
 });
@@ -123,6 +127,7 @@ describe('StudySetup auth gate (JSON body, not HTTP status)', () => {
     fetchMock.authenticated = true;
     fetchMock.configStatus = {
       mode: 'hosted',
+      aiTransport: 'direct',
       hasAnthropicKey: true,
       hasGeminiKey: false,
     };
@@ -159,6 +164,7 @@ describe('StudySetup auth gate (JSON body, not HTTP status)', () => {
     fetchMock.authenticated = true;
     fetchMock.configStatus = {
       mode: 'standalone',
+      aiTransport: 'direct',
       hasAnthropicKey: false,
       hasGeminiKey: true,
       hasOpenAiKey: false,
@@ -215,10 +221,35 @@ describe('StudySetup auth gate (JSON body, not HTTP status)', () => {
     expect(screen.getByText(/ZDR-compatible upstream inference provider/i)).toBeInTheDocument();
   });
 
+  it('shows only Gateway-supported providers and removes the direct-only reasoning control', async () => {
+    fetchMock.authenticated = true;
+    fetchMock.configStatus = {
+      mode: 'standalone',
+      aiTransport: 'gateway',
+      hasAnthropicKey: true,
+      hasGeminiKey: true,
+      hasOpenAiKey: true,
+      hasOpenRouterKey: false,
+    };
+
+    render(<StudySetup />);
+
+    await waitFor(() => {
+      expect(storeMock.state.setAiTransport).toHaveBeenCalledWith('gateway');
+    });
+    expect(screen.getByRole('radio', { name: /Google Gemini/ })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /Anthropic Claude/ })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /^OpenAI/ })).toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: /OpenRouter/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('AI Reasoning Mode')).not.toBeInTheDocument();
+    expect(screen.getByText(/through Vercel AI Gateway/i)).toBeInTheDocument();
+  });
+
   it('hides unconfigured provider choices for hosted accounts while retaining legacy status compatibility', async () => {
     fetchMock.authenticated = true;
     fetchMock.configStatus = {
       mode: 'hosted',
+      aiTransport: 'direct',
       hasAnthropicKey: true,
       hasGeminiKey: false,
     };

@@ -280,32 +280,81 @@ export function validateSetup({
     addRequiredEnv(checks, env, 'KV_REST_API_TOKEN');
     validateUrl(checks, env, 'KV_REST_API_URL', { upstash: true, production });
 
-    const configuredProviders = Object.entries(AI_PROVIDERS)
-      .filter(([, provider]) => isPresent(env, provider.key));
-    if (configuredProviders.length === 0) {
-      checks.push(check(
-        'error',
-        'env.aiProvider.missing',
-        'Configure at least one of GEMINI_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY.',
-      ));
-    } else {
-      checks.push(check('pass', 'env.aiProvider.present', 'At least one AI provider key is configured.'));
-    }
-
+    const aiTransport = isPresent(env, 'AI_TRANSPORT') ? env.AI_TRANSPORT.trim() : 'direct';
     const selectedProvider = isPresent(env, 'AI_PROVIDER') ? env.AI_PROVIDER.trim() : 'gemini';
     const providerConfig = AI_PROVIDERS[selectedProvider];
+    if (aiTransport !== 'direct' && aiTransport !== 'gateway') {
+      checks.push(check('error', 'env.AI_TRANSPORT.invalid', 'AI_TRANSPORT must be direct or gateway.'));
+    } else {
+      checks.push(check('pass', 'env.AI_TRANSPORT.valid', `AI transport is ${aiTransport}.`));
+    }
     if (!providerConfig) {
       checks.push(check(
         'error',
         'env.AI_PROVIDER.invalid',
         'AI_PROVIDER must be gemini, claude, openai, or openrouter.',
       ));
-    } else if (!isPresent(env, providerConfig.key)) {
-      checks.push(check(
-        'error',
-        `env.AI_PROVIDER.${selectedProvider}`,
-        `AI_PROVIDER selects ${providerConfig.label} but ${providerConfig.key} is missing.`,
-      ));
+    }
+
+    if (aiTransport === 'gateway') {
+      const hasGatewayAuth = isPresent(env, 'AI_GATEWAY_API_KEY')
+        || isPresent(env, 'VERCEL_OIDC_TOKEN')
+        || env.VERCEL === '1';
+      if (!hasGatewayAuth) {
+        checks.push(check(
+          'error',
+          'env.aiGateway.auth.missing',
+          'Gateway transport requires Vercel OIDC or AI_GATEWAY_API_KEY.',
+        ));
+      } else {
+        checks.push(check('pass', 'env.aiGateway.auth.present', 'Vercel AI Gateway authentication is available.'));
+      }
+      if (selectedProvider === 'openrouter') {
+        checks.push(check(
+          'error',
+          'env.aiGateway.provider.openrouter',
+          'OpenRouter uses the direct transport; Gateway supports Gemini, Claude, and OpenAI studies.',
+        ));
+      }
+      if (
+        isPresent(env, 'AI_GATEWAY_ZERO_DATA_RETENTION')
+        && env.AI_GATEWAY_ZERO_DATA_RETENTION !== 'true'
+        && env.AI_GATEWAY_ZERO_DATA_RETENTION !== 'false'
+      ) {
+        checks.push(check(
+          'error',
+          'env.AI_GATEWAY_ZERO_DATA_RETENTION.invalid',
+          'AI_GATEWAY_ZERO_DATA_RETENTION must be true or false.',
+        ));
+      }
+      for (const provider of Object.values(AI_PROVIDERS)) {
+        if (isPresent(env, provider.key)) {
+          checks.push(check(
+            'warn',
+            `env.${provider.key}.gateway`,
+            `${provider.key} is ignored by Gateway transport; keep it only if you also use direct transport elsewhere.`,
+          ));
+        }
+      }
+    } else if (aiTransport === 'direct') {
+      const configuredProviders = Object.entries(AI_PROVIDERS)
+        .filter(([, provider]) => isPresent(env, provider.key));
+      if (configuredProviders.length === 0) {
+        checks.push(check(
+          'error',
+          'env.aiProvider.missing',
+          'Configure at least one of GEMINI_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY.',
+        ));
+      } else {
+        checks.push(check('pass', 'env.aiProvider.present', 'At least one AI provider key is configured.'));
+      }
+      if (providerConfig && !isPresent(env, providerConfig.key)) {
+        checks.push(check(
+          'error',
+          `env.AI_PROVIDER.${selectedProvider}`,
+          `AI_PROVIDER selects ${providerConfig.label} but ${providerConfig.key} is missing.`,
+        ));
+      }
     }
 
     validateIndependentSecrets(checks, env, [
@@ -317,6 +366,13 @@ export function validateSetup({
   }
 
   if (selectedMode === 'hosted') {
+    if (isPresent(env, 'AI_TRANSPORT') && env.AI_TRANSPORT.trim() !== 'direct') {
+      checks.push(check(
+        'error',
+        'env.AI_TRANSPORT.hosted',
+        'Hosted researcher BYOS requires AI_TRANSPORT=direct.',
+      ));
+    }
     addRequiredEnv(checks, env, 'PLATFORM_KV_REST_API_URL');
     addRequiredEnv(checks, env, 'PLATFORM_KV_REST_API_TOKEN');
     addRequiredEnv(checks, env, 'PLATFORM_KEY_PREFIX');

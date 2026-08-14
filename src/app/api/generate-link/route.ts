@@ -23,6 +23,7 @@ import { createParticipantLinkRecord, getParticipantLinkByCode } from '@/lib/par
 import { getAppBaseUrl } from '@/lib/appBaseUrl';
 import { missingProviderCredential } from '@/lib/providerAvailability';
 import { validateStudyConfig } from '@/lib/studyConfigValidation';
+import { resolveAITransport } from '@/lib/aiTransport';
 
 const STUDY_ID_PATTERN = /^[a-zA-Z0-9-]+$/;
 
@@ -217,7 +218,11 @@ export async function GET(request: Request) {
 
     const response = NextResponse.json({
       valid: true,
-      data: { studyConfig: live.study.config, sessionHandle },
+      data: {
+        studyConfig: live.study.config,
+        sessionHandle,
+        aiTransport: isHostedMode() ? 'direct' : resolveAITransport(),
+      },
     });
     const remainingSeconds = loaded.link.expiresAt
       ? Math.min(4 * 60 * 60, Math.max(1, Math.floor((loaded.link.expiresAt - Date.now()) / 1000)))

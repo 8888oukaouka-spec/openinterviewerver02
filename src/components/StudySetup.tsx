@@ -37,6 +37,7 @@ import {
 
 type ConfigStatus = {
   mode: 'hosted' | 'standalone';
+  aiTransport: 'direct' | 'gateway';
   hasAnthropicKey: boolean;
   hasGeminiKey: boolean;
   hasOpenAiKey: boolean;
@@ -48,7 +49,7 @@ const PROVIDER_STATUS_FIELD = {
   claude: 'hasAnthropicKey',
   openai: 'hasOpenAiKey',
   openrouter: 'hasOpenRouterKey',
-} as const satisfies Record<AIProviderType, keyof Omit<ConfigStatus, 'mode'>>;
+} as const satisfies Record<AIProviderType, keyof Omit<ConfigStatus, 'mode' | 'aiTransport'>>;
 
 const PROVIDER_ENV_NAME = {
   gemini: 'GEMINI_API_KEY',
@@ -74,7 +75,14 @@ const PROFILE_PRESETS: ProfileField[] = [
 const StudySetup: React.FC = () => {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { setStudyConfig, setStep, studyConfig, loadExampleStudy, setViewMode } = useStore();
+  const {
+    setStudyConfig,
+    setStep,
+    studyConfig,
+    loadExampleStudy,
+    setViewMode,
+    setAiTransport,
+  } = useStore();
 
   // Follow-up study state
   const [parentStudyInfo, setParentStudyInfo] = useState<{ id: string; name: string } | null>(null);
@@ -180,6 +188,7 @@ const StudySetup: React.FC = () => {
         if (
           !res.ok ||
           (data.mode !== 'hosted' && data.mode !== 'standalone') ||
+          (data.aiTransport !== 'direct' && data.aiTransport !== 'gateway') ||
           typeof data.hasAnthropicKey !== 'boolean' ||
           typeof data.hasGeminiKey !== 'boolean' ||
           (data.hasOpenAiKey !== undefined && typeof data.hasOpenAiKey !== 'boolean') ||
@@ -190,6 +199,7 @@ const StudySetup: React.FC = () => {
         if (!cancelled) {
           setConfigStatus({
             mode: data.mode,
+            aiTransport: data.aiTransport,
             hasAnthropicKey: data.hasAnthropicKey,
             hasGeminiKey: data.hasGeminiKey,
             // A legacy status response predating these providers is safe to
@@ -197,6 +207,7 @@ const StudySetup: React.FC = () => {
             hasOpenAiKey: data.hasOpenAiKey === true,
             hasOpenRouterKey: data.hasOpenRouterKey === true,
           });
+          setAiTransport(data.aiTransport);
         }
       } catch (error) {
         console.error('Could not verify configured AI providers:', error);
@@ -210,7 +221,7 @@ const StudySetup: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, setAiTransport]);
 
   // Check for follow-up or edit prefill on mount
   useEffect(() => {
@@ -641,7 +652,8 @@ const StudySetup: React.FC = () => {
     }
   ];
 
-  const providerOptions = configStatus?.mode === 'hosted'
+  const providerOptions = configStatus
+    && (configStatus.mode === 'hosted' || configStatus.aiTransport === 'gateway')
     ? PROVIDER_OPTIONS.filter(provider => isProviderConfigured(provider.id, configStatus))
     : PROVIDER_OPTIONS;
 
@@ -1031,6 +1043,9 @@ const StudySetup: React.FC = () => {
             <h2 className="font-semibold text-lg text-stone-100">AI Provider</h2>
             <p className="text-sm text-stone-400">
               Choose which AI model powers your interviews
+              {configStatus?.aiTransport === 'gateway'
+                ? ' through Vercel AI Gateway.'
+                : '.'}
             </p>
             <div className="space-y-2">
               {providerOptions.length === 0 ? (
@@ -1128,7 +1143,7 @@ const StudySetup: React.FC = () => {
 
             {/* Keep the legacy reasoning control Gemini-only until the stored
                 study contract supports provider-specific reasoning options. */}
-            {aiProvider === 'gemini' && <div className="mt-4 space-y-2">
+            {aiProvider === 'gemini' && configStatus?.aiTransport !== 'gateway' && <div className="mt-4 space-y-2">
               <label htmlFor="study-reasoning-mode" className="block text-sm font-medium text-stone-300">
                 AI Reasoning Mode
               </label>
@@ -1188,6 +1203,8 @@ const StudySetup: React.FC = () => {
                   <p className="mt-1 text-xs text-stone-300">
                     {configStatusError
                       ? configStatusError
+                      : configStatus?.aiTransport === 'gateway'
+                        ? `${selectedProviderName} is not enabled for this Vercel AI Gateway deployment. Choose Gemini, Claude, or OpenAI.`
                       : configStatus?.mode === 'hosted'
                         ? `This account does not have a ${selectedProviderName} key. Add one in Account & connections or finish onboarding before saving or sharing this study.`
                         : <>This deployment does not have <code className="text-stone-100">{selectedProviderEnvName}</code>. Add it server-side, run <code className="text-stone-100">npm run setup:check</code>, and redeploy before saving or sharing this study.</>}

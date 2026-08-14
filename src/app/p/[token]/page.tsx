@@ -9,6 +9,7 @@ import InterviewChat from '@/components/InterviewChat';
 import Synthesis from '@/components/Synthesis';
 import Export from '@/components/Export';
 import { Loader2 } from 'lucide-react';
+import type { AITransport } from '@/lib/aiTransport';
 
 export default function ParticipantPage() {
   const params = useParams();
@@ -43,13 +44,21 @@ export default function ParticipantPage() {
           return;
         }
 
-        const resolvedLink = result.data as { studyConfig: StudyConfig; sessionHandle?: string };
+        const resolvedLink = result.data as {
+          studyConfig: StudyConfig;
+          sessionHandle?: string;
+          aiTransport?: AITransport;
+        };
         if (!resolvedLink.sessionHandle) {
           setError('The participant session could not be established');
           setLoading(false);
           return;
         }
-        beginParticipantSession(resolvedLink.studyConfig, resolvedLink.sessionHandle);
+        beginParticipantSession(
+          resolvedLink.studyConfig,
+          resolvedLink.sessionHandle,
+          resolvedLink.aiTransport === 'gateway' ? 'gateway' : 'direct',
+        );
         setLoading(false);
         router.replace('/consent');
       } catch (err) {

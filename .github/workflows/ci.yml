@@ -38,6 +38,7 @@ jobs:
         env:
           NODE_ENV: production
           DEPLOYMENT_MODE: standalone
+          AI_TRANSPORT: direct
           APP_BASE_URL: https://standalone-build.example.org
           ADMIN_PASSWORD: standalone-build-admin-password
           SESSION_SECRET: standalone-build-session-secret-1234567890
@@ -46,11 +47,27 @@ jobs:
           KV_REST_API_URL: https://build-test.upstash.io
           KV_REST_API_TOKEN: standalone-build-redis-token
           GEMINI_API_KEY: standalone-build-gemini-key
+      - name: Validate Vercel AI Gateway deployment contract
+        run: npm run setup:check -- --mode standalone --production
+        env:
+          NODE_ENV: production
+          VERCEL: '1'
+          DEPLOYMENT_MODE: standalone
+          AI_TRANSPORT: gateway
+          AI_PROVIDER: gemini
+          APP_BASE_URL: https://gateway-build.example.org
+          ADMIN_PASSWORD: gateway-build-admin-password
+          SESSION_SECRET: gateway-build-session-secret-1234567890
+          PARTICIPANT_TOKEN_SECRET: gateway-build-participant-secret-1234567890
+          RATE_LIMIT_SALT: gateway-build-rate-limit-salt-1234567890
+          KV_REST_API_URL: https://build-test.upstash.io
+          KV_REST_API_TOKEN: gateway-build-redis-token
       - name: Validate hosted deployment contract
         run: npm run setup:check -- --mode hosted --production
         env:
           NODE_ENV: production
           DEPLOYMENT_MODE: hosted
+          AI_TRANSPORT: direct
           APP_BASE_URL: https://hosted-build.example.org
           SESSION_SECRET: hosted-build-session-secret-1234567890
           PARTICIPANT_TOKEN_SECRET: hosted-build-participant-secret-1234567890
@@ -66,10 +83,26 @@ jobs:
         run: npm run build
         env:
           DEPLOYMENT_MODE: standalone
+          AI_TRANSPORT: direct
+      - name: Build Vercel AI Gateway mode
+        run: npm run build
+        env:
+          VERCEL: '1'
+          DEPLOYMENT_MODE: standalone
+          AI_TRANSPORT: gateway
+          AI_PROVIDER: gemini
+          APP_BASE_URL: https://gateway-build.example.org
+          ADMIN_PASSWORD: gateway-build-admin-password
+          SESSION_SECRET: gateway-build-session-secret-1234567890
+          PARTICIPANT_TOKEN_SECRET: gateway-build-participant-secret-1234567890
+          RATE_LIMIT_SALT: gateway-build-rate-limit-salt-1234567890
+          KV_REST_API_URL: https://build-test.upstash.io
+          KV_REST_API_TOKEN: gateway-build-redis-token
       - name: Build hosted mode
         run: npm run build
         env:
           DEPLOYMENT_MODE: hosted
+          AI_TRANSPORT: direct
           APP_BASE_URL: https://hosted-build.example.org
           SESSION_SECRET: hosted-build-session-secret-1234567890
           PARTICIPANT_TOKEN_SECRET: hosted-build-participant-secret-1234567890

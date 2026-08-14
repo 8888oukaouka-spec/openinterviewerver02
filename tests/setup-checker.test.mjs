@@ -121,6 +121,41 @@ test('standalone rejects an unknown AI provider', () => {
   assert.equal(report.checks.some((item) => item.code === 'env.AI_PROVIDER.invalid'), true);
 });
 
+test('standalone Gateway accepts Vercel OIDC without provider API keys', () => {
+  const env = validStandaloneEnv();
+  delete env.GEMINI_API_KEY;
+  env.AI_TRANSPORT = 'gateway';
+  env.VERCEL = '1';
+
+  const report = validateSetup({
+    mode: 'standalone',
+    production: true,
+    env,
+    nodeVersion: '24.15.0',
+  });
+
+  assert.equal(report.ok, true, JSON.stringify(report.checks));
+  assert.equal(report.checks.some((item) => item.code === 'env.aiGateway.auth.present'), true);
+});
+
+test('standalone Gateway rejects missing auth and direct-only OpenRouter', () => {
+  const env = validStandaloneEnv();
+  delete env.GEMINI_API_KEY;
+  env.AI_TRANSPORT = 'gateway';
+  env.AI_PROVIDER = 'openrouter';
+
+  const report = validateSetup({
+    mode: 'standalone',
+    production: true,
+    env,
+    nodeVersion: '24.15.0',
+  });
+
+  assert.equal(report.ok, false);
+  assert.equal(report.checks.some((item) => item.code === 'env.aiGateway.auth.missing'), true);
+  assert.equal(report.checks.some((item) => item.code === 'env.aiGateway.provider.openrouter'), true);
+});
+
 test('standalone signing and rate-limit secrets must be independent', () => {
   const env = validStandaloneEnv();
   env.PARTICIPANT_TOKEN_SECRET = env.SESSION_SECRET;
@@ -134,6 +169,14 @@ test('hosted setup uses platform infrastructure and versioned credential keys', 
   const report = validateSetup({ mode: 'hosted', production: true, env, nodeVersion: '24.15.0' });
   assert.equal(report.ok, true, JSON.stringify(report.checks));
   assert.equal(report.checks.some((item) => item.code === 'env.aiProvider.missing'), false);
+});
+
+test('hosted BYOS rejects Gateway transport', () => {
+  const env = validHostedEnv();
+  env.AI_TRANSPORT = 'gateway';
+  const report = validateSetup({ mode: 'hosted', production: true, env, nodeVersion: '24.15.0' });
+  assert.equal(report.ok, false);
+  assert.equal(report.checks.some((item) => item.code === 'env.AI_TRANSPORT.hosted'), true);
 });
 
 test('hosted setup warns that deployment-owner provider keys are ignored', () => {

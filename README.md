@@ -10,9 +10,9 @@ There are three deliberately different ways to use it:
 | --- | --- | --- | --- |
 | **Keyless public demo** (`/demo`) | None | None | See the participant and analysis experience with scripted sample data |
 | **Hosted researcher account** | Sign in, then add your own AI and Upstash credentials in the UI | Your Upstash database | Run research without administering a Vercel project |
-| **Self-hosted standalone** | Configure server-only environment variables | Your deployment's Upstash database | Operate the full application and infrastructure yourself |
+| **Self-hosted standalone** | Vercel AI Gateway/OIDC or server-side provider keys | Your deployment's Upstash database | Operate the full application and infrastructure yourself |
 
-The demo is not a disguised live interview: it is deterministic, does not call an AI provider, and does not save data. Real interviews require a researcher-owned provider account and storage.
+The demo is not a disguised live interview: it is deterministic, does not call an AI provider, and does not save data. Real interviews require configured inference access and storage.
 
 ## Public deployment checks
 
@@ -42,6 +42,8 @@ The authenticated researcher workspace also offers **Load Sample**, which writes
 
 In hosted mode, the platform operator configures the application once. Researchers should not need the Vercel dashboard or deployment environment variables.
 
+Hosted researcher BYOS intentionally uses the direct provider adapters (`AI_TRANSPORT=direct`). This keeps each request bound to that researcher's encrypted credential and retains full Gemini, Claude, OpenAI, and OpenRouter support. The platform operator's Gateway balance or provider keys never substitute for a missing researcher credential.
+
 The researcher journey is:
 
 1. Sign in with an OAuth provider offered on the login page.
@@ -64,6 +66,7 @@ Hosted mode is multi-tenant infrastructure. The operator, not each researcher, m
 | Variable | Requirement |
 | --- | --- |
 | `DEPLOYMENT_MODE` | `hosted` |
+| `AI_TRANSPORT` | `direct`; hosted researcher BYOS does not use platform Gateway credentials |
 | `APP_BASE_URL` | Stable HTTPS origin used for OAuth callbacks and participant links |
 | `SESSION_SECRET` | Independent random value, at least 32 characters |
 | `PARTICIPANT_TOKEN_SECRET` | Different independent random value, at least 32 characters |
@@ -101,7 +104,7 @@ Do not use `NEXT_PUBLIC_` for credentials or signing keys. `APP_BASE_URL` is int
 ### Requirements
 
 - Node.js 24.15 or newer (`.nvmrc` and `.node-version` are included)
-- one Google Gemini, Anthropic Claude, OpenAI, or OpenRouter API key
+- either Vercel AI Gateway authentication or one Google Gemini, Anthropic Claude, OpenAI, or OpenRouter API key
 - one Upstash Redis database with its REST URL and write-capable REST token
 - a stable HTTPS origin for production
 
@@ -146,18 +149,26 @@ Open `http://localhost:3000`. The researcher dashboard uses `ADMIN_PASSWORD`; pa
 | `RATE_LIMIT_SALT` | A third independent random value, at least 32 characters |
 | `KV_REST_API_URL` | Your Upstash REST URL (`https://…upstash.io`) |
 | `KV_REST_API_TOKEN` | Write-capable REST token |
-| `GEMINI_API_KEY` | Required when using Gemini |
-| `ANTHROPIC_API_KEY` | Required when using Claude |
-| `OPENAI_API_KEY` | Required when using OpenAI |
-| `OPENROUTER_API_KEY` | Required when using OpenRouter |
+| `AI_TRANSPORT` | `direct` (default) or `gateway`; hosted researcher BYOS requires `direct` |
+| `AI_GATEWAY_API_KEY` | Gateway authentication outside Vercel; optional on Vercel because the AI SDK uses project OIDC |
+| `AI_GATEWAY_ZERO_DATA_RETENTION` | Optional `true`/`false` Gateway routing filter; enable only on a Vercel plan that supports request-scoped ZDR |
+| `GEMINI_API_KEY` | Required for Gemini when `AI_TRANSPORT=direct` |
+| `ANTHROPIC_API_KEY` | Required for Claude when `AI_TRANSPORT=direct` |
+| `OPENAI_API_KEY` | Required for OpenAI when `AI_TRANSPORT=direct` |
+| `OPENROUTER_API_KEY` | Required for OpenRouter, which is direct-only |
 | `AI_PROVIDER` | Optional default: `gemini`, `claude`, `openai`, or `openrouter`; omitted means `gemini` |
 | `GEMINI_MODEL` / `CLAUDE_MODEL` / `OPENAI_MODEL` / `OPENROUTER_MODEL` | Optional provider-specific interview-turn model override |
 
-Configure at least one AI provider. A per-study selection can override the environment default, but the matching key must exist. Each provider-specific model variable takes precedence over the legacy `AI_MODEL` migration fallback. The study model controls interview turns; synthesis, aggregate analysis, and follow-up generation use the provider-specific synthesis model defined in source and record that actual model in provenance. Model availability changes, so verify the IDs currently enabled on your provider account rather than relying on an old README list.
+Choose one transport:
+
+- `AI_TRANSPORT=gateway` is the streamlined Vercel path. The AI SDK authenticates deployed functions with project OIDC, so no provider key is required. OpenInterviewer supports Gemini, Claude, and OpenAI through Gateway, pins each request to the model creator's endpoint, disables model fallback and SDK retries, requests no-prompt-training routing, and records the requested model, resolved response model, and routed provider. OpenRouter is not exposed in this mode.
+- `AI_TRANSPORT=direct` keeps the portable native adapters. Configure at least one matching provider key. This is required for hosted researcher BYOS and for OpenRouter.
+
+A per-study selection can override `AI_PROVIDER`, but it must be available through the active transport. Each provider-specific model variable takes precedence over the legacy `AI_MODEL` migration fallback. The study model controls interview turns; synthesis, aggregate analysis, and follow-up generation use the provider-specific synthesis model defined in source and record actual execution provenance. Model availability changes, so verify the IDs currently enabled on your provider account rather than relying on an old README list.
 
 ### Provider API and model contract
 
-Each provider has a first-class server-side adapter and its native current SDK/API contract:
+The Vercel transport uses [`ai`](https://ai-sdk.dev/docs) with [Vercel AI Gateway](https://vercel.com/docs/ai-gateway), strict `Output.object` JSON Schema, project OIDC (or `AI_GATEWAY_API_KEY` off Vercel), creator-endpoint pinning, and no model fallback. The direct transport retains first-class native adapters:
 
 - Google Gemini uses [`@google/genai`](https://ai.google.dev/gemini-api/docs/libraries) and the Interactions API with `store: false` and a JSON response schema.
 - Anthropic Claude uses [`@anthropic-ai/sdk`](https://platform.claude.com/docs/en/cli-sdks-libraries/sdks/typescript), the Messages API, and native structured output through `output_config.format`.
@@ -178,10 +189,10 @@ npm run setup:check -- --mode standalone --production
 
 1. Import the repository into a new Vercel project.
 2. Create an Upstash Redis database separately and obtain its REST URL and write token.
-3. Add every required standalone variable to the intended Vercel environment. Use the interactive `vercel env add NAME` command or the project's environment-variable settings; avoid putting secret values in shell history.
+3. Set `AI_TRANSPORT=gateway` to use Vercel OIDC and Gateway credits, or keep `direct` and add a matching provider key. Add every other required standalone variable to the intended Vercel environment. Use the interactive `vercel env add NAME` command or the project's environment-variable settings; avoid putting secret values in shell history.
 4. Keep Preview and Production storage and secrets separate.
 5. Deploy a preview first and run the production-mode setup checker against an environment file pulled for that project, if desired.
-6. Verify login, study save, participant consent, one interview, export, expiry, and revocation before assigning the production domain.
+6. Put a project-scoped monthly AI Gateway budget in place before public interviews. Verify login, study save, participant consent, one interview, export, expiry, and revocation before assigning the production domain.
 
 `vercel env pull .env.local` overwrites that file. Keep manual local-only overrides in `.env.development.local`, or back them up before pulling. Never commit any `.env*.local` file.
 

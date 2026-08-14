@@ -6,6 +6,7 @@ import { GeminiProvider } from './gemini';
 import { ClaudeProvider } from './claude';
 import { OpenAIProvider } from './openai';
 import { OpenRouterProvider } from './openrouter';
+import { GatewayProvider } from './gateway';
 import { StudyConfig } from '@/types';
 import { isHostedMode } from '../mode';
 import {
@@ -14,6 +15,7 @@ import {
   ProviderType,
   resolveSynthesisModel,
 } from './synthesisModel';
+import { isGatewayProvider, resolveAITransport } from '../aiTransport';
 
 export type { ProviderType } from './synthesisModel';
 export { PROVIDER_TYPES, isProviderType, resolveSynthesisModel } from './synthesisModel';
@@ -62,6 +64,16 @@ export function getInterviewProvider(studyConfig?: StudyConfig, keys?: AIProvide
   // Pass a special sentinel ('') to prevent providers from falling back to env vars
   const hosted = isHostedMode();
 
+  if (!hosted && resolveAITransport() === 'gateway') {
+    if (!isGatewayProvider(providerType)) {
+      throw new Error('OpenRouter is available only with the direct AI transport');
+    }
+    if (!model) {
+      throw new Error('Vercel AI Gateway requires an explicit model');
+    }
+    return new GatewayProvider(providerType, model);
+  }
+
   switch (providerType) {
     case 'claude': {
       const key = hosted ? (keys?.anthropicApiKey || '') : (keys?.anthropicApiKey ?? undefined);
@@ -86,3 +98,4 @@ export { GeminiProvider } from './gemini';
 export { ClaudeProvider } from './claude';
 export { OpenAIProvider } from './openai';
 export { OpenRouterProvider } from './openrouter';
+export { GatewayProvider } from './gateway';

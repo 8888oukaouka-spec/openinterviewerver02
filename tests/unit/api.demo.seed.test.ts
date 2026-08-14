@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const contextMock = vi.hoisted(() => ({ getRequestContext: vi.fn() }));
 vi.mock('@/lib/researcherContext', () => contextMock);
@@ -44,6 +44,10 @@ beforeEach(() => {
   kvMock.getAllStudies.mockResolvedValue([]);
   kvMock.saveStudy.mockResolvedValue(true);
   kvMock.saveInterview.mockResolvedValue(true);
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 describe('authenticated sample-workspace seed', () => {
@@ -114,9 +118,24 @@ describe('authenticated sample-workspace seed', () => {
 
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toEqual({
-      error: 'AI provider not configured. Add an AI provider key before loading sample workspace data.',
+      error: 'AI provider not configured. Configure the active AI transport before loading sample workspace data.',
     });
     expect(kvMock.saveStudy).not.toHaveBeenCalled();
     expect(kvMock.saveInterview).not.toHaveBeenCalled();
+  });
+
+  it('uses the configured Gateway provider without a direct provider key', async () => {
+    vi.stubEnv('AI_TRANSPORT', 'gateway');
+    vi.stubEnv('AI_PROVIDER', 'openai');
+    vi.stubEnv('VERCEL', '1');
+    authorizeWithKeys({ geminiApiKey: null, anthropicApiKey: null });
+
+    const response = await POST();
+
+    expect(response.status).toBe(200);
+    expect(kvMock.saveStudy.mock.calls[0][0].config).toMatchObject({
+      aiProvider: 'openai',
+      aiModel: 'gpt-5.6-terra',
+    });
   });
 });

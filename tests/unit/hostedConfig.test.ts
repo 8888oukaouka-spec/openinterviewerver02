@@ -32,6 +32,7 @@ describe('hosted config validator', () => {
     expect(validateHostedConfig(hostedEnv())).toEqual([]);
     expect(getPublicConfig(hostedEnv())).toEqual({
       mode: 'hosted',
+      aiTransport: 'direct',
       ready: true,
       oauth: { google: true, github: false },
       errors: [],
@@ -106,6 +107,7 @@ describe('hosted config validator', () => {
     expect(validateStandaloneConfig(env)).toEqual([]);
     expect(getPublicConfig(env)).toEqual({
       mode: 'standalone',
+      aiTransport: 'direct',
       ready: true,
       oauth: { google: false, github: false },
       errors: [],
@@ -157,6 +159,38 @@ describe('hosted config validator', () => {
     expect(validateStandaloneConfig(env)).toContain('invalid_ai_provider');
   });
 
+  it('accepts standalone Gateway with Vercel OIDC and no provider API keys', () => {
+    const env: NodeJS.ProcessEnv = {
+      NODE_ENV: 'production',
+      DEPLOYMENT_MODE: 'standalone',
+      APP_BASE_URL: 'https://standalone.example',
+      ADMIN_PASSWORD: 'standalone-admin-password',
+      SESSION_SECRET: SECRET_A,
+      PARTICIPANT_TOKEN_SECRET: SECRET_B,
+      RATE_LIMIT_SALT: SECRET_C,
+      KV_REST_API_URL: 'https://standalone.upstash.io',
+      KV_REST_API_TOKEN: 'redis-token',
+      AI_TRANSPORT: 'gateway',
+      AI_PROVIDER: 'gemini',
+      VERCEL: '1',
+    };
+
+    expect(validateStandaloneConfig(env)).toEqual([]);
+    expect(getPublicConfig(env)).toMatchObject({
+      mode: 'standalone',
+      aiTransport: 'gateway',
+      ready: true,
+    });
+    expect(validateStandaloneConfig({ ...env, VERCEL: '' })).toContain('missing_ai_gateway_auth');
+    expect(validateStandaloneConfig({ ...env, AI_PROVIDER: 'openrouter' }))
+      .toContain('invalid_gateway_ai_provider');
+  });
+
+  it('keeps hosted researcher BYOS on direct adapters', () => {
+    expect(validateHostedConfig(hostedEnv({ AI_TRANSPORT: 'gateway' })))
+      .toContain('gateway_not_supported_hosted');
+  });
+
   it('fails closed on production mode misconfiguration without leaking the typo', () => {
     const view = getPublicConfig({
       NODE_ENV: 'production',
@@ -164,6 +198,7 @@ describe('hosted config validator', () => {
     });
     expect(view).toEqual({
       mode: null,
+      aiTransport: null,
       ready: false,
       oauth: { google: false, github: false },
       errors: ['invalid_deployment_mode'],

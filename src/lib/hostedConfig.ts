@@ -5,6 +5,12 @@
 import { isLocalAppHost, parseAppBaseUrl } from './appBaseUrl';
 import { isValidUpstashUrl } from './kvClient';
 import { resolveDeploymentMode } from './mode';
+import {
+  isGatewayAuthConfigured,
+  isGatewayProvider,
+  resolveAITransport,
+  type AITransport,
+} from './aiTransport';
 
 export const MIN_HOSTED_SECRET_LENGTH = 32;
 
@@ -37,12 +43,18 @@ export type HostedConfigError =
   | 'invalid_standalone_redis_url'
   | 'missing_standalone_redis_token'
   | 'missing_ai_provider_key'
-  | 'invalid_ai_provider';
+  | 'invalid_ai_provider'
+  | 'invalid_ai_transport'
+  | 'gateway_not_supported_hosted'
+  | 'missing_ai_gateway_auth'
+  | 'invalid_gateway_ai_provider'
+  | 'invalid_gateway_zdr';
 
 export type OAuthProviderId = 'google' | 'github';
 
 export type PublicConfigView = {
   mode: 'standalone' | 'hosted' | null;
+  aiTransport: AITransport | null;
   ready: boolean;
   oauth: Record<OAuthProviderId, boolean>;
   errors: HostedConfigError[];
@@ -150,6 +162,14 @@ function validateAppBaseUrl(env: ConfigEnv, errors: HostedConfigError[]): void {
 export function validateHostedConfig(env: ConfigEnv = process.env): HostedConfigError[] {
   const errors: HostedConfigError[] = [];
 
+  try {
+    if (resolveAITransport(env) !== 'direct') {
+      errors.push('gateway_not_supported_hosted');
+    }
+  } catch {
+    errors.push('invalid_ai_transport');
+  }
+
   validateAppBaseUrl(env, errors);
 
   const keyPrefix = present(env.PLATFORM_KEY_PREFIX);
@@ -231,29 +251,51 @@ export function validateStandaloneConfig(env: ConfigEnv = process.env): HostedCo
   else if (!isValidUpstashUrl(redisUrl)) errors.push('invalid_standalone_redis_url');
   if (!present(env.KV_REST_API_TOKEN)) errors.push('missing_standalone_redis_token');
 
-  const hasGemini = !!present(env.GEMINI_API_KEY);
-  const hasAnthropic = !!present(env.ANTHROPIC_API_KEY);
-  const hasOpenAi = !!present(env.OPENAI_API_KEY);
-  const hasOpenRouter = !!present(env.OPENROUTER_API_KEY);
-  if (!hasGemini && !hasAnthropic && !hasOpenAi && !hasOpenRouter) {
-    errors.push('missing_ai_provider_key');
-  }
   const selectedProvider = present(env.AI_PROVIDER);
   const effectiveProvider = selectedProvider || 'gemini';
+  let transport: AITransport | null = null;
+  try {
+    transport = resolveAITransport(env);
+  } catch {
+    errors.push('invalid_ai_transport');
+  }
   if (
-    (
-      selectedProvider
-      && selectedProvider !== 'gemini'
-      && selectedProvider !== 'claude'
-      && selectedProvider !== 'openai'
-      && selectedProvider !== 'openrouter'
-    )
-    || (effectiveProvider === 'gemini' && !hasGemini)
-    || (effectiveProvider === 'claude' && !hasAnthropic)
-    || (effectiveProvider === 'openai' && !hasOpenAi)
-    || (effectiveProvider === 'openrouter' && !hasOpenRouter)
+    env.AI_GATEWAY_ZERO_DATA_RETENTION !== undefined
+    && env.AI_GATEWAY_ZERO_DATA_RETENTION !== ''
+    && env.AI_GATEWAY_ZERO_DATA_RETENTION !== 'true'
+    && env.AI_GATEWAY_ZERO_DATA_RETENTION !== 'false'
   ) {
-    errors.push('invalid_ai_provider');
+    errors.push('invalid_gateway_zdr');
+  }
+
+  if (transport === 'gateway') {
+    if (!isGatewayAuthConfigured(env)) errors.push('missing_ai_gateway_auth');
+    if (!isGatewayProvider(effectiveProvider)) {
+      errors.push('invalid_gateway_ai_provider');
+    }
+  } else if (transport === 'direct') {
+    const hasGemini = !!present(env.GEMINI_API_KEY);
+    const hasAnthropic = !!present(env.ANTHROPIC_API_KEY);
+    const hasOpenAi = !!present(env.OPENAI_API_KEY);
+    const hasOpenRouter = !!present(env.OPENROUTER_API_KEY);
+    if (!hasGemini && !hasAnthropic && !hasOpenAi && !hasOpenRouter) {
+      errors.push('missing_ai_provider_key');
+    }
+    if (
+      (
+        selectedProvider
+        && selectedProvider !== 'gemini'
+        && selectedProvider !== 'claude'
+        && selectedProvider !== 'openai'
+        && selectedProvider !== 'openrouter'
+      )
+      || (effectiveProvider === 'gemini' && !hasGemini)
+      || (effectiveProvider === 'claude' && !hasAnthropic)
+      || (effectiveProvider === 'openai' && !hasOpenAi)
+      || (effectiveProvider === 'openrouter' && !hasOpenRouter)
+    ) {
+      errors.push('invalid_ai_provider');
+    }
   }
 
   const sessionSecret = pushSecretErrors(
@@ -287,6 +329,7 @@ export function getPublicConfig(env: ConfigEnv = process.env): PublicConfigView 
   if (!resolved.ok) {
     return {
       mode: null,
+      aiTransport: null,
       ready: false,
       oauth: { google: false, github: false },
       errors: [resolved.error],
@@ -294,11 +337,18 @@ export function getPublicConfig(env: ConfigEnv = process.env): PublicConfigView 
   }
 
   const oauth = getConfiguredOAuthProviders(env);
+  let aiTransport: AITransport | null = null;
+  try {
+    aiTransport = resolveAITransport(env);
+  } catch {
+    aiTransport = null;
+  }
 
   if (resolved.mode === 'standalone') {
     const errors = validateStandaloneConfig(env);
     return {
       mode: 'standalone',
+      aiTransport,
       ready: errors.length === 0,
       oauth: { google: false, github: false },
       errors,
@@ -308,6 +358,7 @@ export function getPublicConfig(env: ConfigEnv = process.env): PublicConfigView 
   const errors = validateHostedConfig(env);
   return {
     mode: 'hosted',
+    aiTransport,
     ready: errors.length === 0,
     oauth,
     errors,

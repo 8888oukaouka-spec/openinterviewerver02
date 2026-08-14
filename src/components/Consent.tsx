@@ -16,6 +16,7 @@ const Consent: React.FC = () => {
     viewMode,
     initializeProfile,
     participantSessionHandle,
+    aiTransport,
   } = useStore();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [consentError, setConsentError] = useState<string | null>(null);
@@ -76,6 +77,8 @@ const Consent: React.FC = () => {
   const providerConfigurationReady = Boolean(selectedProviderId && selectedProviderName && studyConfig.aiModel);
   const providerDisclosure = !providerConfigurationReady
     ? 'The researcher must review and save this study\'s AI provider settings before interviews can begin.'
+    : aiTransport === 'gateway'
+    ? `Your responses are sent through Vercel AI Gateway to ${selectedProviderName}. Routing is pinned to that provider and model fallback is disabled.`
     : selectedProviderId === 'openrouter'
     ? 'Your responses are sent to OpenRouter and a ZDR-compatible upstream inference provider selected for that model.'
     : `Your responses are sent to ${selectedProviderName}.`;

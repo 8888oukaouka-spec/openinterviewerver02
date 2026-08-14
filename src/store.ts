@@ -16,6 +16,7 @@ import {
   ProfileFieldStatus,
   ProfileField
 } from './types';
+import type { AITransport } from './lib/aiTransport';
 
 // Example Study: "The Adaptive Self"
 const EXAMPLE_STUDY: Omit<StudyConfig, 'id' | 'createdAt'> = {
@@ -83,6 +84,7 @@ interface ResearchState {
   currentStep: AppStep;
   previousStep: AppStep | null;
   viewMode: ViewMode;
+  aiTransport: AITransport;
 
   // Study Configuration (Researcher-defined)
   studyConfig: StudyConfig | null;
@@ -113,6 +115,7 @@ interface ResearchState {
   // Actions - Navigation
   setStep: (step: AppStep) => void;
   setViewMode: (mode: ViewMode) => void;
+  setAiTransport: (transport: AITransport) => void;
 
   // Actions - Study Config
   setStudyConfig: (config: StudyConfig) => void;
@@ -146,7 +149,8 @@ interface ResearchState {
 
   beginParticipantSession: (
     studyConfig: StudyConfig,
-    sessionHandle?: string | null
+    sessionHandle?: string | null,
+    aiTransport?: AITransport,
   ) => void;
 
   // Actions - Reset
@@ -160,6 +164,7 @@ export const useStore = create<ResearchState>()(
       currentStep: 'setup',
       previousStep: null,
       viewMode: 'researcher',
+      aiTransport: 'direct',
       studyConfig: null,
       participantProfile: null,
       consentGiven: false,
@@ -179,6 +184,7 @@ export const useStore = create<ResearchState>()(
       })),
 
       setViewMode: (mode) => set({ viewMode: mode }),
+      setAiTransport: (aiTransport) => set({ aiTransport }),
 
       setStudyConfig: (config) => set({ studyConfig: config }),
 
@@ -298,9 +304,10 @@ export const useStore = create<ResearchState>()(
 
       setBehaviorData: (data) => set({ behaviorData: data }),
 
-      beginParticipantSession: (config, sessionHandle = null) => set({
+      beginParticipantSession: (config, sessionHandle = null, aiTransport = 'direct') => set({
         studyConfig: config,
         participantSessionHandle: sessionHandle,
+        aiTransport,
         viewMode: 'participant',
         currentStep: 'consent',
         previousStep: null,
@@ -320,6 +327,7 @@ export const useStore = create<ResearchState>()(
         currentStep: 'setup',
         previousStep: null,
         viewMode: 'researcher',
+        aiTransport: 'direct',
         studyConfig: null,
         participantProfile: null,
         consentGiven: false,
@@ -352,17 +360,19 @@ export const useStore = create<ResearchState>()(
     {
       name: 'research-tool-storage',
       storage: createJSONStorage(() => sessionStorage),
-      version: 4,
+      version: 5,
       migrate: (persistedState) => {
         if (!persistedState || typeof persistedState !== 'object') {
           return persistedState as ResearchState;
         }
         const cleanState = { ...(persistedState as Record<string, unknown>) };
         delete cleanState.participantToken;
+        if (cleanState.aiTransport !== 'gateway') cleanState.aiTransport = 'direct';
         return cleanState as unknown as ResearchState;
       },
       partialize: (state) => ({
         viewMode: state.viewMode,
+        aiTransport: state.aiTransport,
         studyConfig: state.studyConfig,
         participantProfile: state.participantProfile,
         consentGiven: state.consentGiven,

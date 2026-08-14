@@ -1,5 +1,5 @@
 // AI Provider Abstraction Layer
-// Supports Gemini (default) and Claude for interview AI
+// Supports direct native providers and the Vercel AI Gateway transport.
 
 import {
   StudyConfig,
