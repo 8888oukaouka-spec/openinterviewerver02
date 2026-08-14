@@ -3,8 +3,8 @@ import './globals.css'
 import PreviewBanner from '@/components/PreviewBanner'
 
 export const metadata: Metadata = {
-  title: 'Research Interview Tool',
-  description: 'AI-powered qualitative research interview platform',
+  title: 'OpenInterviewer',
+  description: 'AI-assisted qualitative research interviews with evidence-linked synthesis',
 }
 
 export default function RootLayout({

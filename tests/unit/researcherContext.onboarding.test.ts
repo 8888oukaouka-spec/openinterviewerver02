@@ -20,12 +20,18 @@ vi.mock('@/lib/mode', () => ({
   isHostedMode: () => true,
   isStandaloneMode: () => false,
 }));
-vi.mock('@/lib/kvClient', () => ({ getKVClient: vi.fn(), getResearcherClient: vi.fn() }));
-vi.mock('@/lib/crypto', () => ({ decrypt: vi.fn() }));
+const kvClientMock = vi.hoisted(() => ({ getKVClient: vi.fn(), getResearcherClient: vi.fn() }));
+vi.mock('@/lib/kvClient', () => kvClientMock);
+const cryptoMock = vi.hoisted(() => ({ decrypt: vi.fn() }));
+vi.mock('@/lib/crypto', () => cryptoMock);
 vi.mock('@/lib/kv', () => ({ getStudy: vi.fn() }));
 vi.mock('@/lib/participantLinks', () => ({ getParticipantLinkById: vi.fn() }));
 
-import { getHostedResearcherIdentity, getRequestContext } from '@/lib/researcherContext';
+import {
+  getHostedResearcherIdentity,
+  getRequestContext,
+  providerKeysFromContext,
+} from '@/lib/researcherContext';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -47,6 +53,20 @@ beforeEach(() => {
 });
 
 describe('hosted setup authentication boundary', () => {
+  it('projects all four BYOS keys for provider calls', () => {
+    expect(providerKeysFromContext({
+      geminiApiKey: 'gemini-key',
+      anthropicApiKey: 'anthropic-key',
+      openaiApiKey: 'openai-key',
+      openrouterApiKey: 'openrouter-key',
+    })).toEqual({
+      geminiApiKey: 'gemini-key',
+      anthropicApiKey: 'anthropic-key',
+      openaiApiKey: 'openai-key',
+      openrouterApiKey: 'openrouter-key',
+    });
+  });
+
   it('authenticates onboarding identity without resolving researcher storage', async () => {
     const result = await getHostedResearcherIdentity();
 
@@ -81,6 +101,42 @@ describe('hosted setup authentication boundary', () => {
       researcherId: 'researcher-a',
       statusCode: 503,
       retryable: true,
+    });
+  });
+
+  it('decrypts all four hosted provider keys with field-specific purposes', async () => {
+    platformMock.getResearcherByIdChecked.mockResolvedValue({
+      status: 'found',
+      researcher: {
+        id: 'researcher-a',
+        onboardingComplete: true,
+        encryptedRedisUrl: 'redis-url',
+        encryptedRedisToken: 'redis-token',
+        encryptedGeminiApiKey: 'gemini-key',
+        encryptedAnthropicApiKey: 'anthropic-key',
+        encryptedOpenAiApiKey: 'openai-key',
+        encryptedOpenRouterApiKey: 'openrouter-key',
+      },
+    });
+    cryptoMock.decrypt.mockImplementation((value: string) => `plain:${value}`);
+    kvClientMock.getResearcherClient.mockReturnValue({});
+
+    const result = await getRequestContext();
+
+    expect(result.authorized).toBe(true);
+    expect(result.context).toMatchObject({
+      geminiApiKey: 'plain:gemini-key',
+      anthropicApiKey: 'plain:anthropic-key',
+      openaiApiKey: 'plain:openai-key',
+      openrouterApiKey: 'plain:openrouter-key',
+    });
+    expect(cryptoMock.decrypt).toHaveBeenCalledWith('openai-key', {
+      researcherId: 'researcher-a',
+      purpose: 'openai-api-key',
+    });
+    expect(cryptoMock.decrypt).toHaveBeenCalledWith('openrouter-key', {
+      researcherId: 'researcher-a',
+      purpose: 'openrouter-api-key',
     });
   });
 });

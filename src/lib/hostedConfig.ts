@@ -233,12 +233,25 @@ export function validateStandaloneConfig(env: ConfigEnv = process.env): HostedCo
 
   const hasGemini = !!present(env.GEMINI_API_KEY);
   const hasAnthropic = !!present(env.ANTHROPIC_API_KEY);
-  if (!hasGemini && !hasAnthropic) errors.push('missing_ai_provider_key');
+  const hasOpenAi = !!present(env.OPENAI_API_KEY);
+  const hasOpenRouter = !!present(env.OPENROUTER_API_KEY);
+  if (!hasGemini && !hasAnthropic && !hasOpenAi && !hasOpenRouter) {
+    errors.push('missing_ai_provider_key');
+  }
   const selectedProvider = present(env.AI_PROVIDER);
+  const effectiveProvider = selectedProvider || 'gemini';
   if (
-    (selectedProvider && selectedProvider !== 'gemini' && selectedProvider !== 'claude')
-    || (selectedProvider === 'gemini' && !hasGemini)
-    || (selectedProvider === 'claude' && !hasAnthropic)
+    (
+      selectedProvider
+      && selectedProvider !== 'gemini'
+      && selectedProvider !== 'claude'
+      && selectedProvider !== 'openai'
+      && selectedProvider !== 'openrouter'
+    )
+    || (effectiveProvider === 'gemini' && !hasGemini)
+    || (effectiveProvider === 'claude' && !hasAnthropic)
+    || (effectiveProvider === 'openai' && !hasOpenAi)
+    || (effectiveProvider === 'openrouter' && !hasOpenRouter)
   ) {
     errors.push('invalid_ai_provider');
   }

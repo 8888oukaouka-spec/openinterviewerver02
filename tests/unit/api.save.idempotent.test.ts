@@ -1,5 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeStoredInterview } from '../fixtures/models';
+import { CLAUDE_SYNTHESIS_MODEL, GEMINI_SYNTHESIS_MODEL } from '@/types';
+import { resolveProviderType, resolveSynthesisModel } from '@/lib/providers';
 
 /**
  * Interview save idempotency contract.
@@ -47,6 +49,7 @@ const makeRequest = (body: unknown) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubEnv('AI_PROVIDER', '');
   contextMock.getParticipantRequestContext.mockResolvedValue({
     valid: true,
     context: { kvClient: {} },
@@ -63,7 +66,10 @@ beforeEach(() => {
       config: { name: 'Canonical Study' },
     },
   });
-  receiptMock.verifySynthesisReceipt.mockResolvedValue(true);
+  receiptMock.verifySynthesisReceipt.mockResolvedValue({
+    aiProvider: 'gemini',
+    aiModel: GEMINI_SYNTHESIS_MODEL,
+  });
   consentMock.verifyParticipantConsent.mockResolvedValue({
     status: 'accepted',
     consent: {
@@ -81,6 +87,10 @@ beforeEach(() => {
   kvMock.persistCompletedInterview
     .mockResolvedValueOnce({ status: 'created' })
     .mockResolvedValue({ status: 'duplicate' });
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 describe('POST /api/interviews/save idempotency', () => {
@@ -126,12 +136,50 @@ describe('POST /api/interviews/save idempotency', () => {
     expect(await second.json()).toMatchObject({ success: true, created: false });
     expect(kvMock.persistCompletedInterview).toHaveBeenCalledTimes(2);
     expect(kvMock.persistCompletedInterview).toHaveBeenLastCalledWith(
-      expect.any(Object),
+      expect.objectContaining({
+        aiProvider: 'gemini',
+        aiModel: GEMINI_SYNTHESIS_MODEL,
+      }),
       expect.any(String),
       expect.objectContaining({
         expectedStudyRevision: 1,
         rateLimits: [{ key: 'rate:session', maximum: 2, windowSeconds: 86_400 }],
       }),
+      expect.any(Object)
+    );
+  });
+
+  it('stores signed generation-time provenance when provider resolution changes before save', async () => {
+    vi.stubEnv('AI_PROVIDER', 'claude');
+    const generationProvider = resolveProviderType();
+    const generationModel = resolveSynthesisModel(generationProvider);
+    receiptMock.verifySynthesisReceipt.mockResolvedValue({
+      aiProvider: generationProvider,
+      aiModel: generationModel,
+    });
+
+    // The deployment default can change while a participant holds a valid
+    // receipt. Save must not recompute provenance from this later value.
+    vi.stubEnv('AI_PROVIDER', 'gemini');
+    expect(resolveProviderType()).toBe('gemini');
+    const interview = makeStoredInterview({ id: 'interview-claude', studyId: 'study-a' });
+
+    const response = await POST(makeRequest({
+      ...interview,
+      synthesis: {
+        statedPreferences: [], revealedPreferences: [], themes: [], contradictions: [],
+        keyInsights: ['Insight'], bottomLine: 'Bottom line', _receipt: 'receipt',
+      },
+    }));
+
+    expect(response.status).toBe(200);
+    expect(kvMock.persistCompletedInterview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        aiProvider: 'claude',
+        aiModel: CLAUDE_SYNTHESIS_MODEL,
+      }),
+      expect.any(String),
+      expect.any(Object),
       expect.any(Object)
     );
   });

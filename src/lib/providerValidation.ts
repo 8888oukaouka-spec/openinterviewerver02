@@ -74,10 +74,12 @@ export function validateInterviewResponse(input: unknown): AIInterviewResponse {
   if (!isNonEmptyString(input.message)) {
     fail('interview response', 'message', 'must be a non-empty string');
   }
-  if (input.questionAddressed !== undefined && input.questionAddressed !== null && !isNonNegativeInteger(input.questionAddressed)) {
+  if (input.questionAddressed === undefined
+    || (input.questionAddressed !== null && !isNonNegativeInteger(input.questionAddressed))) {
     fail('interview response', 'questionAddressed', 'must be a non-negative integer or null');
   }
-  if (input.phaseTransition !== undefined && input.phaseTransition !== null && !isOneOf(input.phaseTransition, INTERVIEW_PHASES)) {
+  if (input.phaseTransition === undefined
+    || (input.phaseTransition !== null && !isOneOf(input.phaseTransition, INTERVIEW_PHASES))) {
     fail('interview response', 'phaseTransition', 'must be a valid interview phase or null');
   }
   if (!Array.isArray(input.profileUpdates)) {
@@ -97,15 +99,14 @@ export function validateInterviewResponse(input: unknown): AIInterviewResponse {
       fail('interview response', `profileUpdates[${i}].status`, 'must be extracted, vague, or refused');
     }
     if (
-      item.value !== undefined
-      && item.value !== null
+      item.value !== null
       && (typeof item.value !== 'string' || item.value.length > MAX_PROFILE_VALUE)
     ) {
       fail('interview response', `profileUpdates[${i}].value`, 'must be a string or null');
     }
     return {
       fieldId: item.fieldId,
-      value: item.value === undefined ? null : item.value,
+      value: item.value,
       status: item.status as AIInterviewResponse['profileUpdates'][number]['status'],
     };
   });
@@ -114,10 +115,10 @@ export function validateInterviewResponse(input: unknown): AIInterviewResponse {
   }
   return {
     message: input.message,
-    questionAddressed: input.questionAddressed === undefined || input.questionAddressed === null
+    questionAddressed: input.questionAddressed === null
       ? null
       : input.questionAddressed,
-    phaseTransition: input.phaseTransition === undefined || input.phaseTransition === null
+    phaseTransition: input.phaseTransition === null
       ? null
       : (input.phaseTransition as InterviewPhase),
     profileUpdates,
@@ -221,44 +222,33 @@ export function validateAggregateSynthesisPayload(
     };
   });
 
-  let divergentViews: AggregateSynthesisResult['divergentViews'];
-  if (input.divergentViews === undefined) {
-    divergentViews = [];
-  } else {
-    if (!Array.isArray(input.divergentViews)) {
-      fail('aggregate synthesis', 'divergentViews', 'must be an array');
-    }
-    if (input.divergentViews.length > MAX_PROVIDER_LIST_ITEMS) {
-      fail('aggregate synthesis', 'divergentViews', `must contain at most ${MAX_PROVIDER_LIST_ITEMS} items`);
-    }
-    divergentViews = input.divergentViews.map((view, i) => {
-      if (!isRecord(view)) {
-        fail('aggregate synthesis', `divergentViews[${i}]`, 'must be an object');
-      }
-      if (!isNonEmptyString(view.topic)) {
-        fail('aggregate synthesis', `divergentViews[${i}].topic`, 'must be a non-empty string');
-      }
-      if (!isNonEmptyString(view.viewA)) {
-        fail('aggregate synthesis', `divergentViews[${i}].viewA`, 'must be a non-empty string');
-      }
-      if (!isNonEmptyString(view.viewB)) {
-        fail('aggregate synthesis', `divergentViews[${i}].viewB`, 'must be a non-empty string');
-      }
-      return { topic: view.topic, viewA: view.viewA, viewB: view.viewB };
-    });
+  if (!Array.isArray(input.divergentViews)) {
+    fail('aggregate synthesis', 'divergentViews', 'must be an array');
   }
+  if (input.divergentViews.length > MAX_PROVIDER_LIST_ITEMS) {
+    fail('aggregate synthesis', 'divergentViews', `must contain at most ${MAX_PROVIDER_LIST_ITEMS} items`);
+  }
+  const divergentViews = input.divergentViews.map((view, i) => {
+    if (!isRecord(view)) {
+      fail('aggregate synthesis', `divergentViews[${i}]`, 'must be an object');
+    }
+    if (!isNonEmptyString(view.topic)) {
+      fail('aggregate synthesis', `divergentViews[${i}].topic`, 'must be a non-empty string');
+    }
+    if (!isNonEmptyString(view.viewA)) {
+      fail('aggregate synthesis', `divergentViews[${i}].viewA`, 'must be a non-empty string');
+    }
+    if (!isNonEmptyString(view.viewB)) {
+      fail('aggregate synthesis', `divergentViews[${i}].viewB`, 'must be a non-empty string');
+    }
+    return { topic: view.topic, viewA: view.viewA, viewB: view.viewB };
+  });
 
   if (!isStringArray(input.keyFindings)) {
     fail('aggregate synthesis', 'keyFindings', 'must be an array of strings');
   }
-  let researchImplications: string[];
-  if (input.researchImplications === undefined) {
-    researchImplications = [];
-  } else {
-    if (!isStringArray(input.researchImplications)) {
-      fail('aggregate synthesis', 'researchImplications', 'must be an array of strings');
-    }
-    researchImplications = input.researchImplications;
+  if (!isStringArray(input.researchImplications)) {
+    fail('aggregate synthesis', 'researchImplications', 'must be an array of strings');
   }
   if (!isNonEmptyString(input.bottomLine)) {
     fail('aggregate synthesis', 'bottomLine', 'must be a non-empty string');
@@ -267,7 +257,7 @@ export function validateAggregateSynthesisPayload(
     commonThemes,
     divergentViews,
     keyFindings: input.keyFindings,
-    researchImplications,
+    researchImplications: input.researchImplications,
     bottomLine: input.bottomLine,
   };
 }

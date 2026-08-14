@@ -14,12 +14,24 @@ import { makeStoredStudy, makeStudyConfig } from '../fixtures/models';
 
 const contextMock = vi.hoisted(() => ({
   getParticipantRequestContext: vi.fn(),
+  providerKeysFromContext: vi.fn((context: Record<string, unknown>) => ({
+    geminiApiKey: context.geminiApiKey,
+    anthropicApiKey: context.anthropicApiKey,
+    openaiApiKey: context.openaiApiKey,
+    openrouterApiKey: context.openrouterApiKey,
+  })),
 }));
 
 vi.mock('@/lib/researcherContext', () => contextMock);
 
 const providersMock = vi.hoisted(() => ({
   getInterviewProvider: vi.fn(),
+  resolveProviderType: vi.fn((config?: { aiProvider?: string }) => (
+    config?.aiProvider === 'claude' ? 'claude' : 'gemini'
+  )),
+  resolveSynthesisModel: vi.fn((provider: string) => (
+    provider === 'claude' ? 'claude-opus-4-5' : 'gemini-3.1-pro-preview'
+  )),
 }));
 
 vi.mock('@/lib/providers', () => providersMock);
@@ -83,6 +95,8 @@ const sessionContext = {
   kvClient: {} as never,
   geminiApiKey: 'canonical-gemini-key',
   anthropicApiKey: null,
+  openaiApiKey: null,
+  openrouterApiKey: null,
   researcherId: 'researcher-a',
   onboardingComplete: true,
 };
@@ -121,12 +135,19 @@ beforeEach(() => {
     }),
     getInterviewGreeting: vi.fn().mockResolvedValue('server greeting'),
     synthesizeInterview: vi.fn().mockResolvedValue({
-      statedPreferences: ['Clear ownership'],
-      revealedPreferences: ['Fast feedback'],
-      themes: [{ theme: 'Trust', evidence: 'Repeated concern', frequency: 1 }],
-      contradictions: [],
-      keyInsights: ['Ownership matters'],
-      bottomLine: 'Participants need clearer ownership.',
+      value: {
+        statedPreferences: ['Clear ownership'],
+        revealedPreferences: ['Fast feedback'],
+        themes: [{ theme: 'Trust', evidence: 'Repeated concern', frequency: 1 }],
+        contradictions: [],
+        keyInsights: ['Ownership matters'],
+        bottomLine: 'Participants need clearer ownership.',
+      },
+      execution: {
+        provider: 'gemini',
+        requestedModel: 'gemini-3.1-pro-preview',
+        model: 'gemini-3.1-pro-preview-001',
+      },
     }),
   });
 });
@@ -158,6 +179,9 @@ describe('POST /api/interview canonical provider context', () => {
     // Keys must come from the server context, not the request
     expect(providersMock.getInterviewProvider.mock.calls[0][1]).toMatchObject({
       geminiApiKey: 'canonical-gemini-key',
+      anthropicApiKey: null,
+      openaiApiKey: null,
+      openrouterApiKey: null,
     });
 
     const provider = providersMock.getInterviewProvider.mock.results[0].value;
@@ -273,5 +297,12 @@ describe('POST /api/synthesis hosted platform limits', () => {
     );
     expect(providersMock.getInterviewProvider.mock.results[0].value.synthesizeInterview)
       .toHaveBeenCalledOnce();
+    expect(receiptMock.createSynthesisReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        aiProvider: 'gemini',
+        requestedAiModel: 'gemini-3.1-pro-preview',
+        aiModel: 'gemini-3.1-pro-preview-001',
+      })
+    );
   });
 });

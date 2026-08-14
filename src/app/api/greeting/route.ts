@@ -6,7 +6,7 @@
 
 import { NextResponse } from 'next/server';
 import { getInterviewProvider } from '@/lib/providers';
-import { getParticipantRequestContext } from '@/lib/researcherContext';
+import { getParticipantRequestContext, providerKeysFromContext } from '@/lib/researcherContext';
 import { loadCanonicalStudy } from '@/lib/canonicalStudy';
 import { providerErrorResponse } from '@/lib/providerErrors';
 import { participantRateLimitResponse } from '@/lib/rateLimit';
@@ -100,10 +100,7 @@ export async function POST(request: Request) {
 
     let provider;
     try {
-      provider = getInterviewProvider(canonical.study.config, {
-        geminiApiKey: context.geminiApiKey,
-        anthropicApiKey: context.anthropicApiKey,
-      });
+      provider = getInterviewProvider(canonical.study.config, providerKeysFromContext(context));
     } catch {
       return NextResponse.json(
         { error: 'AI provider is not configured on the server.' },

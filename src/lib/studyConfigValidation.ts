@@ -1,10 +1,9 @@
 import {
   AIProviderType,
-  CLAUDE_MODELS,
-  GEMINI_MODELS,
   StudyConfig,
 } from '@/types';
 import { readBoundedJsonObject } from './requestBody';
+import { isKnownProviderModel } from './providerRegistry';
 
 export const STUDY_MUTATION_MAX_BYTES = 128 * 1024;
 
@@ -53,11 +52,6 @@ const PROFILE_FIELD_FIELDS = new Set([
   'required',
   'options',
 ]);
-
-const MODEL_IDS: Record<AIProviderType, Set<string>> = {
-  gemini: new Set(GEMINI_MODELS.map((model) => model.id)),
-  claude: new Set(CLAUDE_MODELS.map((model) => model.id)),
-};
 
 type ValidationResult =
   | { ok: true; config: StudyConfig }
@@ -123,10 +117,18 @@ function validateProfileSchema(value: unknown): boolean {
 }
 
 function validateModel(provider: unknown, model: unknown): boolean {
-  if (provider === undefined) return model === undefined;
-  if (provider !== 'gemini' && provider !== 'claude') return false;
-  if (model === undefined) return true;
-  return isBoundedString(model, MAX_MODEL_LENGTH, true) && MODEL_IDS[provider].has(model);
+  // Canonical studies must bind the data processor and requested model. Older
+  // records may omit these fields, but they must be deliberately reviewed and
+  // saved (which advances the study revision) before participant use resumes.
+  if (provider === undefined || model === undefined) return false;
+  if (
+    provider !== 'gemini'
+    && provider !== 'claude'
+    && provider !== 'openai'
+    && provider !== 'openrouter'
+  ) return false;
+  return isBoundedString(model, MAX_MODEL_LENGTH, true)
+    && isKnownProviderModel(provider as AIProviderType, model);
 }
 
 /**
@@ -199,10 +201,6 @@ export function validateStudyConfig(value: unknown): ValidationResult {
   if (value.enableReasoning !== undefined && typeof value.enableReasoning !== 'boolean') {
     return { ok: false, error: 'Invalid AI reasoning setting' };
   }
-  if (value.enableReasoning !== undefined && value.aiProvider !== 'gemini') {
-    return { ok: false, error: 'AI reasoning can only be configured for Gemini studies' };
-  }
-
   return { ok: true, config: value as unknown as StudyConfig };
 }
 

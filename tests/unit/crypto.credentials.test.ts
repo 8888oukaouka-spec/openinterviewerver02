@@ -51,6 +51,17 @@ describe('credential encryption envelopes', () => {
     })).toThrow();
   });
 
+  it('uses distinct AAD purposes for OpenAI and OpenRouter credentials', () => {
+    process.env.CREDENTIAL_ENCRYPTION_KEYS = JSON.stringify({ current: keyB });
+    process.env.CREDENTIAL_ENCRYPTION_ACTIVE_KEY_ID = 'current';
+    const openAiContext = { researcherId: 'researcher-a', purpose: 'openai-api-key' as const };
+    const openRouterContext = { researcherId: 'researcher-a', purpose: 'openrouter-api-key' as const };
+    const envelope = encrypt('provider-secret', openAiContext);
+
+    expect(decrypt(envelope, openAiContext)).toBe('provider-secret');
+    expect(() => decrypt(envelope, openRouterContext)).toThrow();
+  });
+
   it('decrypts the original unversioned envelope only with the explicit legacy key', () => {
     const iv = randomBytes(12);
     const cipher = createCipheriv('aes-256-gcm', legacyKey, iv);

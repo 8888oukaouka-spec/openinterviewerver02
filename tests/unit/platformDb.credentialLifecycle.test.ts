@@ -267,6 +267,8 @@ describe('platform credential lifecycle scripts', () => {
       encryptedRedisToken: 'encrypted-external-token',
       encryptedGeminiApiKey: 'encrypted-ai-key',
       encryptedAnthropicApiKey: null,
+      encryptedOpenAiApiKey: null,
+      encryptedOpenRouterApiKey: null,
       redisConfiguredAt: 1,
     };
     const result = await deleteResearcherAccount(researcher);
@@ -299,7 +301,8 @@ describe('platform credential lifecycle scripts', () => {
       id: 'researcher-a', email: 'owner@example.com', name: 'Owner', avatarUrl: null,
       oauthProvider: 'google', oauthId: 'oauth-a', createdAt: 1, lastLoginAt: 1,
       onboardingComplete: true, encryptedRedisUrl: null, encryptedRedisToken: null,
-      encryptedGeminiApiKey: null, encryptedAnthropicApiKey: null, redisConfiguredAt: null,
+      encryptedGeminiApiKey: null, encryptedAnthropicApiKey: null,
+      encryptedOpenAiApiKey: null, encryptedOpenRouterApiKey: null, redisConfiguredAt: null,
     });
     expect(result).toEqual({ status: 'too-many-records' });
   });

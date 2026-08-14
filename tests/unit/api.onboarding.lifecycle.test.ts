@@ -39,9 +39,10 @@ vi.mock('@/lib/mode', () => ({ isHostedMode: () => true }));
 
 import { POST as saveCredentials } from '@/app/api/onboarding/save-credentials/route';
 import { POST as completeOnboarding } from '@/app/api/onboarding/complete/route';
+import { POST as validateAiKey } from '@/app/api/onboarding/validate-ai-key/route';
 import { DELETE as clearCredentials } from '@/app/api/account/credentials/route';
 
-const account = () => ({
+const account = (overrides: Record<string, unknown> = {}) => ({
   id: 'researcher-a',
   email: 'researcher@example.com',
   name: 'Researcher',
@@ -55,8 +56,11 @@ const account = () => ({
   encryptedRedisToken: 'redis-token',
   encryptedGeminiApiKey: 'gemini-key',
   encryptedAnthropicApiKey: null,
+  encryptedOpenAiApiKey: null,
+  encryptedOpenRouterApiKey: null,
   redisConfiguredAt: 1,
   credentialRevision: 4,
+  ...overrides,
 });
 
 beforeEach(() => {
@@ -76,6 +80,20 @@ beforeEach(() => {
 });
 
 describe('hosted credential lifecycle routes', () => {
+  it.each(['openai', 'openrouter'] as const)('accepts %s key validation without returning the key', async provider => {
+    const request = new Request('http://localhost/api/onboarding/validate-ai-key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, apiKey: ' provider-secret ' }),
+    });
+
+    const response = await validateAiKey(request);
+
+    expect(response.status).toBe(200);
+    expect(validationMock.validateAiCredential).toHaveBeenCalledWith(provider, 'provider-secret');
+    expect(await response.json()).toEqual({ valid: true });
+  });
+
   it('re-reads, decrypts and validates persisted credentials before completion', async () => {
     cookiesMock.get.mockReturnValue({ value: '/setup' });
     const response = await completeOnboarding();
@@ -130,6 +148,47 @@ describe('hosted credential lifecycle routes', () => {
     expect(JSON.stringify(await response.json())).not.toContain('new-key');
   });
 
+  it('validates and stores an OpenRouter replacement with field-bound encryption', async () => {
+    const request = new Request('http://localhost/api/onboarding/save-credentials', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ openRouterApiKey: ' openrouter-key ' }),
+    });
+    const response = await saveCredentials(request);
+
+    expect(response.status).toBe(200);
+    expect(validationMock.validateAiCredential).toHaveBeenCalledWith('openrouter', 'openrouter-key');
+    expect(cryptoMock.encrypt).toHaveBeenCalledWith('openrouter-key', {
+      researcherId: 'researcher-a',
+      purpose: 'openrouter-api-key',
+    });
+    expect(platformMock.updateResearcherCredentialsAtomic).toHaveBeenCalledWith(
+      'researcher-a',
+      4,
+      expect.objectContaining({ encryptedOpenRouterApiKey: 'encrypted:openrouter-key' })
+    );
+    expect(JSON.stringify(await response.json())).not.toContain('openrouter-key');
+  });
+
+  it('can complete onboarding with only an OpenAI AI credential', async () => {
+    platformMock.getResearcherByIdChecked.mockResolvedValue({
+      status: 'found',
+      researcher: account({
+        encryptedGeminiApiKey: null,
+        encryptedOpenAiApiKey: 'openai-key',
+      }),
+    });
+
+    const response = await completeOnboarding();
+
+    expect(response.status).toBe(200);
+    expect(cryptoMock.decrypt).toHaveBeenCalledWith('openai-key', {
+      researcherId: 'researcher-a',
+      purpose: 'openai-api-key',
+    });
+    expect(validationMock.validateAiCredential).toHaveBeenCalledWith('openai', 'plain:openai-key');
+  });
+
   it('allows an intentional null clear and resets onboarding when it removes the last AI key', async () => {
     const request = new Request('http://localhost/api/onboarding/save-credentials', {
       method: 'POST',
@@ -166,5 +225,35 @@ describe('hosted credential lifecycle routes', () => {
       })
     );
     expect(kvClientMock.evictResearcherClients).toHaveBeenCalledWith('plain:redis-url');
+  });
+
+  it('clears OpenAI without resetting onboarding while OpenRouter remains configured', async () => {
+    platformMock.getResearcherByIdChecked.mockResolvedValue({
+      status: 'found',
+      researcher: account({
+        onboardingComplete: true,
+        encryptedGeminiApiKey: null,
+        encryptedOpenAiApiKey: 'openai-key',
+        encryptedOpenRouterApiKey: 'openrouter-key',
+      }),
+    });
+    const request = new Request('http://localhost/api/account/credentials', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target: 'openai' }),
+    });
+
+    const response = await clearCredentials(request);
+
+    expect(response.status).toBe(200);
+    expect(platformMock.updateResearcherCredentialsAtomic).toHaveBeenCalledWith(
+      'researcher-a',
+      4,
+      { encryptedOpenAiApiKey: null }
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      onboardingComplete: true,
+      configured: { openai: false, openrouter: true },
+    });
   });
 });

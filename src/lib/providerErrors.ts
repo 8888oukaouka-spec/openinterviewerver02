@@ -99,7 +99,7 @@ export function classifyProviderError(
     if (status === 429) {
       return new ProviderFailure('rate-limited', `${provider} ${operation} was rate limited`, err);
     }
-    if (status === 400 || status === 401 || status === 403 || status === 404 || status === 422) {
+    if (status === 400 || status === 401 || status === 402 || status === 403 || status === 404 || status === 422) {
       return new ProviderFailure('config', `${provider} ${operation} was rejected (configuration error)`, err);
     }
     if (status >= 500) {

@@ -1,7 +1,17 @@
 {
   "name": "openinterviewer",
   "version": "1.0.0",
+  "description": "Open-source platform for adaptive, AI-assisted qualitative interviews.",
   "private": true,
+  "license": "MIT",
+  "homepage": "https://openinterviewer.vercel.app",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/linxule/openinterviewer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/linxule/openinterviewer/issues"
+  },
   "engines": {
     "node": ">=24.15.0"
   },
@@ -22,6 +32,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.117.1",
     "@google/genai": "^2.17.1",
+    "@openrouter/sdk": "1.2.35",
     "@upstash/redis": "^1.36.2",
     "arctic": "^3.7.0",
     "framer-motion": "^11.0.0",
@@ -29,6 +40,7 @@
     "jszip": "^3.10.1",
     "lucide-react": "^0.460.0",
     "next": "^16.3.1",
+    "openai": "^7.4.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-markdown": "^9.0.0",

@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getInterviewGreeting } from '@/services/geminiService';
+import { getInterviewGreeting } from '@/services/interviewApi';
 import { saveCompletedInterview } from '@/services/storageService';
 import { makeStudyConfig } from '../fixtures/models';
 
@@ -19,7 +19,7 @@ describe('participant and preview request headers', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    await getInterviewGreeting(makeStudyConfig(), null, false, sessionHandle);
+    await getInterviewGreeting(makeStudyConfig(), false, sessionHandle);
 
     expect(fetchMock).toHaveBeenCalledWith('/api/greeting', expect.objectContaining({
       headers: expect.objectContaining({
@@ -37,7 +37,7 @@ describe('participant and preview request headers', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    await getInterviewGreeting(makeStudyConfig(), null, true, sessionHandle);
+    await getInterviewGreeting(makeStudyConfig(), true, sessionHandle);
 
     const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
     expect(headers['X-OpenInterviewer-Preview']).toBe('1');
@@ -71,7 +71,7 @@ describe('participant and preview request headers', () => {
         contradictions: [],
       },
       createdAt: 1,
-    }, null, false, sessionHandle);
+    }, false, sessionHandle);
 
     expect(fetchMock).toHaveBeenCalledWith('/api/interviews/save', expect.objectContaining({
       headers: expect.objectContaining({

@@ -26,6 +26,7 @@ import {
 } from '@/lib/studyConfigValidation';
 import { StoredStudy } from '@/types';
 import { randomUUID } from 'crypto';
+import { missingProviderCredential } from '@/lib/providerAvailability';
 
 // GET /api/studies - List all saved studies
 export async function GET() {
@@ -42,7 +43,7 @@ export async function GET() {
     if (!kvAvailable) {
       return NextResponse.json({
         studies: [],
-        warning: 'Storage not configured. Connect Vercel KV to enable persistence.'
+        warning: 'Storage not configured. Connect Upstash Redis to enable persistence.'
       });
     }
 
@@ -76,7 +77,7 @@ export async function POST(request: Request) {
     const kvAvailable = await isKVAvailable(context.kvClient);
     if (!kvAvailable) {
       return NextResponse.json(
-        { error: 'Storage not configured. Connect Vercel KV to enable persistence.' },
+        { error: 'Storage not configured. Connect Upstash Redis to enable persistence.' },
         { status: 503 }
       );
     }
@@ -92,6 +93,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: validatedConfig.error }, { status: 400 });
     }
     const serverConfig = validatedConfig.config;
+    let missingProvider;
+    try {
+      missingProvider = missingProviderCredential(context, serverConfig);
+    } catch {
+      return NextResponse.json({ error: 'The selected AI provider is invalid.' }, { status: 400 });
+    }
+    if (missingProvider) {
+      return NextResponse.json({
+        error: 'Connect a key for the selected AI provider before saving this study.',
+        code: 'PROVIDER_NOT_CONFIGURED',
+        provider: missingProvider,
+      }, { status: 409 });
+    }
 
     const storedStudy: StoredStudy = {
       id: studyId,

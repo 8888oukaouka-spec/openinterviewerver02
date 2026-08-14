@@ -99,6 +99,28 @@ describe('getParticipantRequestContext revoked links', () => {
     expect(result.studyId).toBe('study-open');
   });
 
+  it('blocks a legacy study until provider and model are explicitly resaved', async () => {
+    authMock.verifyParticipantToken.mockResolvedValue({
+      valid: true,
+      studyId: 'study-open',
+      linkId: 'a'.repeat(64),
+      sessionId: 'session-a',
+      studyRevision: 1,
+    });
+    const legacyStudy = makeStoredStudy({ id: 'study-open' });
+    delete legacyStudy.config.aiProvider;
+    delete legacyStudy.config.aiModel;
+    kvMock.getStudy.mockResolvedValue(legacyStudy);
+
+    const result = await getParticipantRequestContext(makeRequest());
+
+    expect(result).toMatchObject({
+      valid: false,
+      statusCode: 409,
+    });
+    expect(result.error).toContain('reviewed and saved');
+  });
+
   it('denies access when the study cannot be looked up (fail closed)', async () => {
     authMock.verifyParticipantToken.mockResolvedValue({
       valid: true,

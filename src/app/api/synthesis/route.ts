@@ -5,8 +5,10 @@
 // server-side; request bodies are never authoritative.
 
 import { NextResponse } from 'next/server';
-import { getInterviewProvider } from '@/lib/providers';
-import { getParticipantRequestContext } from '@/lib/researcherContext';
+import {
+  getInterviewProvider,
+} from '@/lib/providers';
+import { getParticipantRequestContext, providerKeysFromContext } from '@/lib/researcherContext';
 import { loadCanonicalStudy } from '@/lib/canonicalStudy';
 import { providerErrorResponse } from '@/lib/providerErrors';
 import { participantRateLimitResponse } from '@/lib/rateLimit';
@@ -128,10 +130,7 @@ export async function POST(request: Request) {
 
     let provider;
     try {
-      provider = getInterviewProvider(canonical.study.config, {
-        geminiApiKey: context.geminiApiKey,
-        anthropicApiKey: context.anthropicApiKey,
-      });
+      provider = getInterviewProvider(canonical.study.config, providerKeysFromContext(context));
     } catch {
       return NextResponse.json(
         { error: 'AI provider is not configured on the server.' },
@@ -150,12 +149,16 @@ export async function POST(request: Request) {
         studyId: canonical.study.id,
         studyRevision: canonical.study.revision ?? 1,
         participantSessionId: isAdmin ? 'admin-preview' : participantSessionId!,
+        aiProvider: result.execution.provider,
+        requestedAiModel: result.execution.requestedModel,
+        aiModel: result.execution.model,
+        routedProvider: result.execution.routedProvider,
         transcript: history,
         participantProfile,
         behaviorData,
-        synthesis: result,
+        synthesis: result.value,
       });
-      return NextResponse.json({ ...result, _receipt: receipt });
+      return NextResponse.json({ ...result.value, _receipt: receipt });
     } catch (providerError) {
       return providerErrorResponse(providerError);
     }

@@ -1,4 +1,4 @@
-// Research Interview Tool Types
+// OpenInterviewer domain types
 
 // ============================================
 // Interview Phase & Progress Tracking
@@ -52,7 +52,7 @@ export interface ParticipantProfile {
 
 export type AIBehavior = 'structured' | 'standard' | 'exploratory';
 
-export type AIProviderType = 'gemini' | 'claude';
+export type AIProviderType = 'gemini' | 'claude' | 'openai' | 'openrouter';
 
 // ============================================
 // AI Model Configuration
@@ -64,27 +64,53 @@ export interface AIModelOption {
   desc: string;
 }
 
-// Available Gemini models (verified from official docs)
+// Available Gemini models
 export const GEMINI_MODELS: AIModelOption[] = [
+  { id: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash', desc: 'Balanced capability and speed' },
   { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', desc: 'Fast, cost-effective' },
   { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', desc: 'Higher quality' },
   { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview', desc: 'Higher capability (preview)' },
 ];
 
-// Available Claude models (verified from official docs)
+// Available Claude models
 export const CLAUDE_MODELS: AIModelOption[] = [
-  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', desc: 'Fastest ($1/$5 per MTok)' },
-  { id: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5', desc: 'Balanced ($3/$15 per MTok)' },
-  { id: 'claude-opus-4-5', label: 'Claude Opus 4.5', desc: 'Higher capability ($5/$25 per MTok)' },
+  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', desc: 'Optimized for speed' },
+  { id: 'claude-sonnet-5', label: 'Claude Sonnet 5', desc: 'Balanced capability and speed' },
+  { id: 'claude-opus-5', label: 'Claude Opus 5', desc: 'Highest capability' },
+  { id: 'claude-fable-5', label: 'Claude Fable 5', desc: 'Creative and expressive' },
+  { id: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5', desc: 'Balanced capability and speed' },
+  { id: 'claude-opus-4-5', label: 'Claude Opus 4.5', desc: 'Higher capability' },
+];
+
+// Available OpenAI Responses API models
+export const OPENAI_MODELS: AIModelOption[] = [
+  { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna', desc: 'Cost-efficient' },
+  { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra', desc: 'Balanced capability and speed' },
+  { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', desc: 'Highest capability' },
+];
+
+// Curated OpenRouter models. A bounded provider/model slug can also be entered
+// by self-hosters, but automatic model routing is intentionally not supported.
+export const OPENROUTER_MODELS: AIModelOption[] = [
+  { id: 'openai/gpt-5.6-luna', label: 'GPT-5.6 Luna', desc: 'Cost-efficient' },
+  { id: 'openai/gpt-5.6-terra', label: 'GPT-5.6 Terra', desc: 'Balanced capability and speed' },
+  { id: 'openai/gpt-5.6-sol', label: 'GPT-5.6 Sol', desc: 'Highest capability' },
+  { id: 'anthropic/claude-sonnet-5', label: 'Claude Sonnet 5', desc: 'Balanced capability and speed' },
+  { id: 'anthropic/claude-opus-5', label: 'Claude Opus 5', desc: 'Highest capability' },
+  { id: 'google/gemini-3.7-flash', label: 'Gemini 3.7 Flash', desc: 'Fast multimodal model' },
 ];
 
 // Default models for each provider
-export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
-export const DEFAULT_CLAUDE_MODEL = 'claude-sonnet-4-5';
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.7-flash';
+export const DEFAULT_CLAUDE_MODEL = 'claude-sonnet-5';
+export const DEFAULT_OPENAI_MODEL = 'gpt-5.6-terra';
+export const DEFAULT_OPENROUTER_MODEL = 'openai/gpt-5.6-terra';
 
 // Synthesis models (switch to the app's configured higher-capability model)
 export const GEMINI_SYNTHESIS_MODEL = 'gemini-3.1-pro-preview';
-export const CLAUDE_SYNTHESIS_MODEL = 'claude-opus-4-5';
+export const CLAUDE_SYNTHESIS_MODEL = 'claude-opus-5';
+export const OPENAI_SYNTHESIS_MODEL = 'gpt-5.6-sol';
+export const OPENROUTER_SYNTHESIS_MODEL = 'openai/gpt-5.6-sol';
 
 // Link expiration options
 export type LinkExpirationOption = 'never' | '7days' | '30days' | '90days';
@@ -98,8 +124,12 @@ export interface StudyConfig {
   topicAreas: string[];           // General topic areas for synthesis
   profileSchema: ProfileField[];  // Fields to collect during interview
   aiBehavior: AIBehavior;
-  aiProvider?: AIProviderType;    // Optional, defaults to env or 'gemini'
-  aiModel?: string;               // Optional, defaults to provider-specific env or default
+  // Optional in the TypeScript shape only so pre-explicit-provider records can
+  // be loaded for researcher repair. Canonical save/runtime validation requires
+  // both fields; participant access remains blocked until a legacy study is
+  // reviewed and resaved with an explicit provider and model.
+  aiProvider?: AIProviderType;
+  aiModel?: string;
   consentText: string;
   createdAt: number;
   // Follow-up study lineage
@@ -182,7 +212,7 @@ export interface AIInterviewResponse {
 }
 
 // ============================================
-// Stored Interview (Vercel KV)
+// Stored Interview (Upstash Redis)
 // ============================================
 
 export interface StoredInterview {
@@ -201,19 +231,9 @@ export interface StoredInterview {
   consentAcceptedAt?: number;
   aiProvider?: AIProviderType;
   aiModel?: string;
+  requestedAiModel?: string;
+  routedProvider?: string;
   participantLinkId?: string;
-}
-
-// ============================================
-// Participant Token (URL)
-// ============================================
-
-export interface ParticipantToken {
-  studyId: string;
-  studyConfig: StudyConfig;
-  createdAt: number;
-  expiresAt?: number;
-  researcherId?: string;  // Present in hosted mode for researcher context resolution
 }
 
 // ============================================
@@ -236,6 +256,8 @@ export interface ResearcherAccount {
   encryptedRedisToken: string | null;
   encryptedGeminiApiKey: string | null;
   encryptedAnthropicApiKey: string | null;
+  encryptedOpenAiApiKey?: string | null;
+  encryptedOpenRouterApiKey?: string | null;
 
   redisConfiguredAt: number | null;
   // Monotonic CAS value for credential/onboarding lifecycle mutations.
@@ -253,10 +275,12 @@ export interface ResearcherProfile {
   hasRedisConfigured: boolean;
   hasGeminiKey: boolean;
   hasAnthropicKey: boolean;
+  hasOpenAiKey?: boolean;
+  hasOpenRouterKey?: boolean;
 }
 
 // ============================================
-// Stored Study (Vercel KV)
+// Stored Study (Upstash Redis)
 // ============================================
 
 export interface StoredStudy {
@@ -280,10 +304,13 @@ export interface AggregateSynthesisResult {
   interviewCount: number;
   aiProvider: AIProviderType;
   aiModel: string;
+  requestedAiModel?: string;
+  routedProvider?: string;
   commonThemes: { theme: string; frequency: number; representativeQuotes: string[] }[];
   divergentViews: { topic: string; viewA: string; viewB: string }[];
   keyFindings: string[];
   researchImplications: string[];
   bottomLine: string;           // One-paragraph summary of all interviews
   generatedAt: number;
+  _receipt?: string;            // Server-signed aggregate content and provenance
 }

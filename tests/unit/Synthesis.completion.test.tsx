@@ -10,7 +10,7 @@ const serviceMocks = vi.hoisted(() => ({
 
 const routerMock = vi.hoisted(() => ({ push: vi.fn() }));
 
-vi.mock('@/services/geminiService', () => ({
+vi.mock('@/services/interviewApi', () => ({
   synthesizeInterview: serviceMocks.synthesizeInterview,
 }));
 
@@ -42,7 +42,6 @@ function seedStore(viewMode: 'participant' | 'preview') {
     participantProfile: null,
     interviewHistory: [{ id: 'm-1', role: 'user', content: 'My response', timestamp: Date.now() }],
     synthesis,
-    participantToken: viewMode === 'participant' ? 'participant-token' : null,
     participantSessionHandle: 'session-handle',
   });
 }

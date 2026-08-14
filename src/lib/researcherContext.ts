@@ -12,6 +12,8 @@ import { verifySessionToken, verifyParticipantToken, SESSION_COOKIE_NAME } from 
 import { getStudy } from './kv';
 import { getParticipantLinkById } from './participantLinks';
 import { StoredStudy } from '@/types';
+import type { AIProviderKeys } from './providers';
+import { validateStudyConfig } from './studyConfigValidation';
 
 export interface ResearcherContext {
   // Identity (null in standalone mode)
@@ -23,9 +25,28 @@ export interface ResearcherContext {
   // AI API keys
   geminiApiKey: string | null;
   anthropicApiKey: string | null;
+  openaiApiKey: string | null;
+  openrouterApiKey: string | null;
 
   // Whether the researcher has completed onboarding
   onboardingComplete: boolean;
+}
+
+// Keep provider credential projection in one place so every generation route
+// forwards the full hosted BYOS set and future providers cannot be omitted by
+// a route-local key literal.
+export function providerKeysFromContext(
+  context: Pick<
+    ResearcherContext,
+    'geminiApiKey' | 'anthropicApiKey' | 'openaiApiKey' | 'openrouterApiKey'
+  >
+): AIProviderKeys {
+  return {
+    geminiApiKey: context.geminiApiKey,
+    anthropicApiKey: context.anthropicApiKey,
+    openaiApiKey: context.openaiApiKey,
+    openrouterApiKey: context.openrouterApiKey,
+  };
 }
 
 // Resolve context for a researcher by ID (shared logic)
@@ -69,6 +90,12 @@ async function resolveById(researcherId: string): Promise<ResearcherContext> {
     anthropicApiKey: researcher.encryptedAnthropicApiKey
       ? decrypt(researcher.encryptedAnthropicApiKey, { researcherId, purpose: 'anthropic-api-key' })
       : null,
+    openaiApiKey: researcher.encryptedOpenAiApiKey
+      ? decrypt(researcher.encryptedOpenAiApiKey, { researcherId, purpose: 'openai-api-key' })
+      : null,
+    openrouterApiKey: researcher.encryptedOpenRouterApiKey
+      ? decrypt(researcher.encryptedOpenRouterApiKey, { researcherId, purpose: 'openrouter-api-key' })
+      : null,
     onboardingComplete: researcher.onboardingComplete,
   };
 }
@@ -80,6 +107,8 @@ function getStandaloneContext(): ResearcherContext {
     kvClient: getKVClient(),
     geminiApiKey: process.env.GEMINI_API_KEY || null,
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || null,
+    openaiApiKey: process.env.OPENAI_API_KEY || null,
+    openrouterApiKey: process.env.OPENROUTER_API_KEY || null,
     onboardingComplete: true,
   };
 }
@@ -278,6 +307,15 @@ export async function getParticipantRequestContext(
           statusCode: 403,
         };
       }
+      const validatedStudy = validateStudyConfig(study.config);
+      if (!validatedStudy.ok) {
+        return {
+          valid: false,
+          context: null,
+          error: 'This study must be reviewed and saved by the researcher before participant access can continue.',
+          statusCode: 409,
+        };
+      }
       if (study.config.linksEnabled === false) {
         return {
           valid: false,
@@ -293,7 +331,7 @@ export async function getParticipantRequestContext(
         valid: true,
         context: standaloneContext,
         studyId: auth.studyId,
-        study,
+        study: { ...study, config: validatedStudy.config },
         linkId: auth.linkId,
         participantSessionId: auth.sessionId,
         studyRevision: auth.studyRevision,
@@ -354,6 +392,15 @@ export async function getParticipantRequestContext(
             statusCode: 403,
           };
         }
+        const validatedStudy = validateStudyConfig(study.config);
+        if (!validatedStudy.ok) {
+          return {
+            valid: false,
+            context: null,
+            error: 'This study must be reviewed and saved by the researcher before participant access can continue.',
+            statusCode: 409,
+          };
+        }
         if (study.config.linksEnabled === false) {
           return {
             valid: false,
@@ -369,7 +416,7 @@ export async function getParticipantRequestContext(
           valid: true,
           context,
           studyId: auth.studyId,
-          study,
+          study: { ...study, config: validatedStudy.config },
           linkId: auth.linkId,
           participantSessionId: auth.sessionId,
           studyRevision: auth.studyRevision,

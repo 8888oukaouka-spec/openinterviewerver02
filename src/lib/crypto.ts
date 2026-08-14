@@ -22,7 +22,9 @@ export type CredentialPurpose =
   | 'redis-url'
   | 'redis-token'
   | 'gemini-api-key'
-  | 'anthropic-api-key';
+  | 'anthropic-api-key'
+  | 'openai-api-key'
+  | 'openrouter-api-key';
 
 export interface CredentialEncryptionContext {
   researcherId: string;
@@ -102,6 +104,8 @@ function validateContext(context: CredentialEncryptionContext): void {
       'redis-token',
       'gemini-api-key',
       'anthropic-api-key',
+      'openai-api-key',
+      'openrouter-api-key',
     ].includes(context.purpose)
   ) {
     throw new Error('Credential encryption context is invalid');

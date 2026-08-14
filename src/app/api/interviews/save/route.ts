@@ -124,7 +124,7 @@ export async function POST(request: Request) {
     }
 
     const { _receipt, ...verifiedSynthesis } = clientData.synthesis;
-    const receiptValid = await verifySynthesisReceipt({
+    const synthesisProvenance = await verifySynthesisReceipt({
       receipt: _receipt,
       studyId: canonical.study.id,
       studyRevision: canonical.study.revision ?? 1,
@@ -134,7 +134,7 @@ export async function POST(request: Request) {
       behaviorData: clientData.behaviorData,
       synthesis: verifiedSynthesis,
     });
-    if (!receiptValid) {
+    if (!synthesisProvenance) {
       return NextResponse.json({ error: 'Synthesis receipt is invalid or expired.' }, { status: 403 });
     }
 
@@ -186,8 +186,10 @@ export async function POST(request: Request) {
       studyRevision: canonical.study.revision ?? 1,
       consentHash: consentRecord!.consentHash,
       consentAcceptedAt: consentRecord!.acceptedAt,
-      aiProvider: canonical.study.config.aiProvider || 'gemini',
-      aiModel: canonical.study.config.aiModel,
+      aiProvider: synthesisProvenance.aiProvider,
+      aiModel: synthesisProvenance.aiModel,
+      requestedAiModel: synthesisProvenance.requestedAiModel,
+      routedProvider: synthesisProvenance.routedProvider,
       participantLinkId: linkId,
     };
 
@@ -201,6 +203,10 @@ export async function POST(request: Request) {
       createdAt: clientData.createdAt ?? null,
       consentHash: consentRecord!.consentHash,
       consentAcceptedAt: consentRecord!.acceptedAt,
+      aiProvider: synthesisProvenance.aiProvider,
+      aiModel: synthesisProvenance.aiModel,
+      requestedAiModel: synthesisProvenance.requestedAiModel,
+      routedProvider: synthesisProvenance.routedProvider,
     });
 
     const persistence = await persistCompletedInterview(

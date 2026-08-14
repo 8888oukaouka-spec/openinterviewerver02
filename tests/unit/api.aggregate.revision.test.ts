@@ -2,8 +2,17 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeStoredInterview, makeStoredStudy } from '../fixtures/models';
+import { GEMINI_SYNTHESIS_MODEL, OPENROUTER_SYNTHESIS_MODEL } from '@/types';
 
-const contextMock = vi.hoisted(() => ({ getRequestContext: vi.fn() }));
+const contextMock = vi.hoisted(() => ({
+  getRequestContext: vi.fn(),
+  providerKeysFromContext: vi.fn((context: Record<string, unknown>) => ({
+    geminiApiKey: context.geminiApiKey,
+    anthropicApiKey: context.anthropicApiKey,
+    openaiApiKey: context.openaiApiKey,
+    openrouterApiKey: context.openrouterApiKey,
+  })),
+}));
 vi.mock('@/lib/researcherContext', () => contextMock);
 
 const kvMock = vi.hoisted(() => ({
@@ -14,12 +23,20 @@ const kvMock = vi.hoisted(() => ({
 vi.mock('@/lib/kv', () => kvMock);
 
 const synthesizeAggregate = vi.hoisted(() => vi.fn());
-vi.mock('@/lib/providers', () => ({
-  getInterviewProvider: () => ({ synthesizeAggregate }),
-}));
+const getInterviewProvider = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/providers', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/providers')>();
+  return {
+    ...actual,
+    getInterviewProvider,
+  };
+});
 
 const platformRateLimitMock = vi.hoisted(() => ({ hostedAiRateLimitResponse: vi.fn() }));
 vi.mock('@/lib/platformAiRateLimit', () => platformRateLimitMock);
+
+const receiptMock = vi.hoisted(() => ({ createAggregateSynthesisReceipt: vi.fn() }));
+vi.mock('@/lib/synthesisReceipt', () => receiptMock);
 
 import { POST } from '@/app/api/synthesis/aggregate/route';
 
@@ -48,12 +65,23 @@ beforeEach(() => {
       kvClient: {},
       geminiApiKey: 'test-key',
       anthropicApiKey: null,
+      openaiApiKey: null,
+      openrouterApiKey: null,
       researcherId: 'researcher-a',
     },
   });
   platformRateLimitMock.hostedAiRateLimitResponse.mockResolvedValue(null);
+  receiptMock.createAggregateSynthesisReceipt.mockResolvedValue('aggregate-receipt');
   kvMock.isKVAvailable.mockResolvedValue(true);
-  synthesizeAggregate.mockResolvedValue(aggregate);
+  getInterviewProvider.mockReturnValue({ synthesizeAggregate });
+  synthesizeAggregate.mockResolvedValue({
+    value: aggregate,
+    execution: {
+      provider: 'gemini',
+      requestedModel: GEMINI_SYNTHESIS_MODEL,
+      model: `${GEMINI_SYNTHESIS_MODEL}-served`,
+    },
+  });
 });
 
 describe('aggregate synthesis revision provenance', () => {
@@ -87,7 +115,48 @@ describe('aggregate synthesis revision provenance', () => {
       interviewIds: ['current-a', 'current-b'],
       interviewCount: 2,
       aiProvider: 'gemini',
-      aiModel: 'gemini-2.5-flash',
+      requestedAiModel: GEMINI_SYNTHESIS_MODEL,
+      aiModel: `${GEMINI_SYNTHESIS_MODEL}-served`,
+      _receipt: 'aggregate-receipt',
+    });
+    expect(receiptMock.createAggregateSynthesisReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({ studyId: study.id, studyRevision: 4 }),
+    );
+  });
+
+  it('records OpenRouter requested, served, and routed provenance from execution', async () => {
+    const study = makeStoredStudy({ id: 'study-openrouter', revision: 2 });
+    study.config.id = study.id;
+    study.config.aiProvider = 'openrouter';
+    study.config.aiModel = 'openai/gpt-5.6-terra';
+    kvMock.getStudy.mockResolvedValue(study);
+    kvMock.getStudyInterviewsChecked.mockResolvedValue({ status: 'ok', items: [
+      makeStoredInterview({ id: 'current-a', studyId: study.id, studyRevision: 2, synthesis }),
+      makeStoredInterview({ id: 'current-b', studyId: study.id, studyRevision: 2, synthesis }),
+    ] });
+    synthesizeAggregate.mockResolvedValueOnce({
+      value: aggregate,
+      execution: {
+        provider: 'openrouter',
+        requestedModel: OPENROUTER_SYNTHESIS_MODEL,
+        model: 'openai/gpt-5.6-sol-2026-08-01',
+        routedProvider: 'OpenAI',
+      },
+    });
+
+    const response = await POST(new Request('http://localhost/api/synthesis/aggregate', {
+      method: 'POST',
+      body: JSON.stringify({ studyId: study.id }),
+    }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      synthesis: {
+        aiProvider: 'openrouter',
+        requestedAiModel: OPENROUTER_SYNTHESIS_MODEL,
+        aiModel: 'openai/gpt-5.6-sol-2026-08-01',
+        routedProvider: 'OpenAI',
+      },
     });
   });
 
@@ -109,5 +178,28 @@ describe('aggregate synthesis revision provenance', () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ studyRevision: 2, eligibleInterviewCount: 1 });
     expect(synthesizeAggregate).not.toHaveBeenCalled();
+  });
+
+  it('returns a safe provider configuration error instead of an internal error', async () => {
+    const study = makeStoredStudy({ id: 'study-unconfigured', revision: 1 });
+    study.config.id = study.id;
+    kvMock.getStudy.mockResolvedValue(study);
+    kvMock.getStudyInterviewsChecked.mockResolvedValue({ status: 'ok', items: [
+      makeStoredInterview({ id: 'current-a', studyId: study.id, studyRevision: 1, synthesis }),
+      makeStoredInterview({ id: 'current-b', studyId: study.id, studyRevision: 1, synthesis }),
+    ] });
+    getInterviewProvider.mockImplementationOnce(() => {
+      throw new Error('missing key');
+    });
+
+    const response = await POST(new Request('http://localhost/api/synthesis/aggregate', {
+      method: 'POST',
+      body: JSON.stringify({ studyId: study.id }),
+    }));
+
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toEqual({
+      error: 'AI provider is not configured on the server.',
+    });
   });
 });

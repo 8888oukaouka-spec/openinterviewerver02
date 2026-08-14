@@ -2,6 +2,8 @@
 
 OpenInterviewer is an open-source platform for adaptive, AI-assisted qualitative interviews. Researchers configure a study, share an opaque participant link, and review transcripts and synthesis in a dashboard.
 
+Contributing or working with a coding agent? Start with [`CONTRIBUTING.md`](CONTRIBUTING.md) and the repository map in [`AGENTS.md`](AGENTS.md).
+
 There are three deliberately different ways to use it:
 
 | Journey | Credentials | Persistence | Intended use |
@@ -11,6 +13,14 @@ There are three deliberately different ways to use it:
 | **Self-hosted standalone** | Configure server-only environment variables | Your deployment's Upstash database | Operate the full application and infrastructure yourself |
 
 The demo is not a disguised live interview: it is deterministic, does not call an AI provider, and does not save data. Real interviews require a researcher-owned provider account and storage.
+
+## Public deployment checks
+
+The canonical site is [openinterviewer.vercel.app](https://openinterviewer.vercel.app), and its public `/demo` is designed to work without provider or storage configuration. Deployment mode and persistent-workspace health are runtime state, so check them instead of preserving a dated snapshot in this README:
+
+- `/api/config/mode` reports the active mode and whether the configuration shape is valid;
+- `/api/config/readiness` exposes the same safe configuration contract for setup UI; and
+- `/api/health/ready` additionally checks the mode-specific database and returns `503` when the application cannot serve persistent researcher workflows.
 
 ## 1. Try the keyless demo
 
@@ -26,6 +36,8 @@ The demo:
 
 Every response, follow-up, and insight is pre-written and visibly labeled as synthetic. The demo is useful for understanding the participant-to-researcher workflow, not model quality, latency, or provider availability.
 
+The authenticated researcher workspace also offers **Load Sample**, which writes a synthetic study and interviews to that researcher's configured Upstash database so dashboard and aggregate-analysis screens can be explored. It is storage-backed sample data and does not power the public `/demo`. Loading or clearing the sample makes no AI call; generating new aggregate or follow-up analysis uses the configured provider and may count against its quota.
+
 ## 2. Use a hosted researcher account
 
 In hosted mode, the platform operator configures the application once. Researchers should not need the Vercel dashboard or deployment environment variables.
@@ -34,14 +46,16 @@ The researcher journey is:
 
 1. Sign in with an OAuth provider offered on the login page.
 2. Complete the in-app onboarding.
-3. Add at least one researcher-owned AI key: Google Gemini or Anthropic Claude.
+3. Add at least one researcher-owned AI key: Google Gemini, Anthropic Claude, OpenAI, or OpenRouter.
 4. Add a researcher-owned Upstash Redis REST URL and REST token.
 5. Validate and save the credentials.
 6. Create and save a study, generate a participant link, and share it.
 
 The setup UI uses password inputs and never returns stored credential values to the browser. Credentials are encrypted before being stored in the platform database. They must be decrypted by the application's server functions when making a request on the researcher's behalf; encryption at rest is not end-to-end encryption. AI providers receive the prompts and interview content required to generate a response, under the researcher's provider account and terms. Upstash stores the study and interview records under the researcher's account.
 
-Credential validation in the onboarding UI contacts the selected service and may count against its quota. The repository-local setup checker described below never contacts those services.
+All four AI keys belong in the authenticated onboarding or account-connections UI. In hosted mode, deployment-owner `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `OPENROUTER_API_KEY` values are ignored for researcher work; the application never falls back to them when a researcher's key is absent.
+
+Testing, saving, and completing onboarding can each revalidate credentials, so one setup pass may make several provider model-list requests and Redis pings. Those requests are rate-limited but may count against provider quotas. The repository-local setup checker described below never contacts those services.
 
 ### Hosted platform operator requirements
 
@@ -59,8 +73,8 @@ Hosted mode is multi-tenant infrastructure. The operator, not each researcher, m
 | `PLATFORM_KEY_PREFIX` | Environment-specific namespace such as `staging` or `production` |
 | `CREDENTIAL_ENCRYPTION_KEYS` | JSON object mapping key IDs to base64-encoded 32-byte AES keys |
 | `CREDENTIAL_ENCRYPTION_ACTIVE_KEY_ID` | Key ID used for new credential writes |
-| `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` | Optional OAuth pair; configure at least one complete OAuth provider |
-| `GITHUB_CLIENT_ID` + `GITHUB_CLIENT_SECRET` | Optional OAuth pair; configure at least one complete OAuth provider |
+| `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` | One supported OAuth pair; at least one complete pair is required |
+| `GITHUB_CLIENT_ID` + `GITHUB_CLIENT_SECRET` | One supported OAuth pair; either provider may be omitted when the other pair is complete |
 
 Example keyring shape, with the real key omitted:
 
@@ -70,6 +84,8 @@ CREDENTIAL_ENCRYPTION_ACTIVE_KEY_ID=2026-08
 ```
 
 Generate a credential-encryption key with `openssl rand -base64 32`. Keep every old key in the keyring until all credentials written with it have been rotated. `CREDENTIAL_ENCRYPTION_KEY` is the legacy, unversioned migration variable; retain it only while old records still need to be read, then remove it.
+
+Generate `SESSION_SECRET`, `PARTICIPANT_TOKEN_SECRET`, and `RATE_LIMIT_SALT` independently with `openssl rand -hex 32`. Do not reuse any value across purposes or environments.
 
 Create separate OAuth applications for staging and production. Their callback URLs are:
 
@@ -85,7 +101,7 @@ Do not use `NEXT_PUBLIC_` for credentials or signing keys. `APP_BASE_URL` is int
 ### Requirements
 
 - Node.js 24.15 or newer (`.nvmrc` and `.node-version` are included)
-- one Gemini or Anthropic API key
+- one Google Gemini, Anthropic Claude, OpenAI, or OpenRouter API key
 - one Upstash Redis database with its REST URL and write-capable REST token
 - a stable HTTPS origin for production
 
@@ -124,7 +140,7 @@ Open `http://localhost:3000`. The researcher dashboard uses `ADMIN_PASSWORD`; pa
 | --- | --- |
 | `DEPLOYMENT_MODE` | `standalone` |
 | `APP_BASE_URL` | Canonical HTTPS origin, for example `https://interviews.example.org` |
-| `ADMIN_PASSWORD` | Independent researcher login password; 16+ characters recommended |
+| `ADMIN_PASSWORD` | Independent researcher login password; minimum 16 characters |
 | `SESSION_SECRET` | Independent random value, at least 32 characters |
 | `PARTICIPANT_TOKEN_SECRET` | Different independent random value, at least 32 characters |
 | `RATE_LIMIT_SALT` | A third independent random value, at least 32 characters |
@@ -132,10 +148,25 @@ Open `http://localhost:3000`. The researcher dashboard uses `ADMIN_PASSWORD`; pa
 | `KV_REST_API_TOKEN` | Write-capable REST token |
 | `GEMINI_API_KEY` | Required when using Gemini |
 | `ANTHROPIC_API_KEY` | Required when using Claude |
-| `AI_PROVIDER` | Optional default: `gemini` or `claude` |
-| `GEMINI_MODEL` / `CLAUDE_MODEL` | Optional provider-specific model override |
+| `OPENAI_API_KEY` | Required when using OpenAI |
+| `OPENROUTER_API_KEY` | Required when using OpenRouter |
+| `AI_PROVIDER` | Optional default: `gemini`, `claude`, `openai`, or `openrouter`; omitted means `gemini` |
+| `GEMINI_MODEL` / `CLAUDE_MODEL` / `OPENAI_MODEL` / `OPENROUTER_MODEL` | Optional provider-specific interview-turn model override |
 
-Configure at least one AI provider. A per-study selection can override the environment default, but the matching key must exist. Model availability changes; use a model ID currently enabled on your provider account rather than relying on an old README list.
+Configure at least one AI provider. A per-study selection can override the environment default, but the matching key must exist. Each provider-specific model variable takes precedence over the legacy `AI_MODEL` migration fallback. The study model controls interview turns; synthesis, aggregate analysis, and follow-up generation use the provider-specific synthesis model defined in source and record that actual model in provenance. Model availability changes, so verify the IDs currently enabled on your provider account rather than relying on an old README list.
+
+### Provider API and model contract
+
+Each provider has a first-class server-side adapter and its native current SDK/API contract:
+
+- Google Gemini uses [`@google/genai`](https://ai.google.dev/gemini-api/docs/libraries) and the Interactions API with `store: false` and a JSON response schema.
+- Anthropic Claude uses [`@anthropic-ai/sdk`](https://platform.claude.com/docs/en/cli-sdks-libraries/sdks/typescript), the Messages API, and native structured output through `output_config.format`.
+- OpenAI uses the official [`openai`](https://github.com/openai/openai-node) SDK, the [Responses API](https://developers.openai.com/api/docs/guides/migrate-to-responses), strict structured output, and `store: false`.
+- OpenRouter uses the official [`@openrouter/sdk`](https://openrouter.ai/docs/client-sdks/typescript/overview) stable Chat API. Its routing policy sets strict JSON Schema, `require_parameters`, `data_collection: "deny"`, zero-data-retention (`zdr`), and no model fallback.
+
+OpenRouter is a routing service: interview content is sent to the selected upstream inference endpoint under the researcher's OpenRouter account. The application records the OpenRouter adapter, requested model, resolved response model, and routed upstream provider in generation provenance. Synthesis receipts sign that provenance so a later save cannot substitute it. Privacy and structured-output routing constraints can make some models unavailable; the application reports that as a provider error instead of silently relaxing the policy.
+
+The built-in model catalog was reviewed against the official [Gemini](https://ai.google.dev/gemini-api/docs/models), [Claude](https://platform.claude.com/docs/en/about-claude/models/overview), [OpenAI](https://developers.openai.com/api/docs/models), and [OpenRouter](https://openrouter.ai/models) catalogs on **2026-08-14**. Without an environment or per-study override, the built-in defaults are `gemini-3.7-flash`, `claude-sonnet-5`, `gpt-5.6-terra`, and `openai/gpt-5.6-terra`, respectively. Existing saved studies that use the catalogued Gemini 2.5/3.1 or Claude 4.5 model IDs remain accepted; changing a default does not rewrite them. OpenRouter offers curated entries plus a bounded `provider/model` slug, but it does not support `openrouter/auto` or promise that every catalog model satisfies this application's strict-schema and zero-data-retention requirements.
 
 For a production readiness check:
 
@@ -208,9 +239,9 @@ Editing a study advances its revision and invalidates links and participant sess
 
 Do not place real credentials in issues, logs, screenshots, chat transcripts, or diagnostic output.
 
-## Hosted cutover and legacy links
+## Migrating pre-opaque-link deployments
 
-The hosted architecture intentionally retires links minted by the legacy standalone deployment. Old signed-JWT links cannot be converted into the new opaque, revision-bound link records, including old links configured to never expire.
+This section applies only to releases that minted signed-JWT share URLs before the opaque-link security rebuild. Those historical links cannot be converted into the current opaque, revision-bound link records, including old links configured to never expire. Current standalone and hosted deployments use the same opaque-link contract.
 
 Before cutover:
 
@@ -221,7 +252,7 @@ Before cutover:
 
 Do not point legacy and hosted releases at the same writable keyspace. A rollback restores the old deployment and its original storage; it does not merge interviews collected by both generations. Export any hosted data needed before rolling back.
 
-## Vercel blue/green release checklist
+## Future hosted cutover runbook
 
 No deploy command in this repository performs the cutover automatically. For a hosted release:
 
@@ -242,15 +273,19 @@ No deploy command in this repository performs the cutover automatically. For a h
 
 ```bash
 npm ci
+npx playwright install chromium
 npm run lint
 npm run typecheck
 npm test
 npm run test:setup
 npm run build
 npm run test:e2e
+git diff --check
 ```
 
 The browser regression proves that the keyless demo does not contact application AI APIs or external services.
+
+For ordinary updates to an already configured deployment, use a reviewed pull request, require the CI and preview checks, merge to `main`, then verify the exact Git-backed production deployment on the canonical domain and scan runtime errors. The longer runbook above is for the first hosted-mode infrastructure cutover, not every application release.
 
 ## Project structure
 

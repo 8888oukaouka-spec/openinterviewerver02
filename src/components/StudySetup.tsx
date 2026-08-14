@@ -4,7 +4,13 @@ import React, { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { useStore } from '@/store';
-import { StudyConfig, ProfileField, AIBehavior, AIProviderType, LinkExpirationOption, GEMINI_MODELS, CLAUDE_MODELS, DEFAULT_GEMINI_MODEL, DEFAULT_CLAUDE_MODEL } from '@/types';
+import { StudyConfig, ProfileField, AIBehavior, AIProviderType, LinkExpirationOption } from '@/types';
+import {
+  DEFAULT_MODEL_BY_PROVIDER,
+  isKnownProviderModel,
+  PROVIDER_MODELS,
+  PROVIDER_OPTIONS,
+} from '@/lib/providerRegistry';
 import {
   FileText,
   Plus,
@@ -33,12 +39,28 @@ type ConfigStatus = {
   mode: 'hosted' | 'standalone';
   hasAnthropicKey: boolean;
   hasGeminiKey: boolean;
+  hasOpenAiKey: boolean;
+  hasOpenRouterKey: boolean;
 };
+
+const PROVIDER_STATUS_FIELD = {
+  gemini: 'hasGeminiKey',
+  claude: 'hasAnthropicKey',
+  openai: 'hasOpenAiKey',
+  openrouter: 'hasOpenRouterKey',
+} as const satisfies Record<AIProviderType, keyof Omit<ConfigStatus, 'mode'>>;
+
+const PROVIDER_ENV_NAME = {
+  gemini: 'GEMINI_API_KEY',
+  claude: 'ANTHROPIC_API_KEY',
+  openai: 'OPENAI_API_KEY',
+  openrouter: 'OPENROUTER_API_KEY',
+} as const satisfies Record<AIProviderType, string>;
 
 const isProviderConfigured = (
   provider: AIProviderType,
   status: ConfigStatus | null
-) => Boolean(status && (provider === 'claude' ? status.hasAnthropicKey : status.hasGeminiKey));
+) => Boolean(status?.[PROVIDER_STATUS_FIELD[provider]]);
 
 // Common profile field presets
 const PROFILE_PRESETS: ProfileField[] = [
@@ -52,7 +74,7 @@ const PROFILE_PRESETS: ProfileField[] = [
 const StudySetup: React.FC = () => {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { setStudyConfig, setStep, studyConfig, loadExampleStudy, setViewMode, setParticipantToken } = useStore();
+  const { setStudyConfig, setStep, studyConfig, loadExampleStudy, setViewMode } = useStore();
 
   // Follow-up study state
   const [parentStudyInfo, setParentStudyInfo] = useState<{ id: string; name: string } | null>(null);
@@ -76,7 +98,7 @@ const StudySetup: React.FC = () => {
     studyConfig?.aiProvider || 'gemini'
   );
   const [aiModel, setAiModel] = useState<string>(
-    studyConfig?.aiModel || (studyConfig?.aiProvider === 'claude' ? DEFAULT_CLAUDE_MODEL : DEFAULT_GEMINI_MODEL)
+    studyConfig?.aiModel || DEFAULT_MODEL_BY_PROVIDER[studyConfig?.aiProvider || 'gemini']
   );
   const [enableReasoning, setEnableReasoning] = useState<boolean | undefined>(
     studyConfig?.enableReasoning
@@ -159,11 +181,23 @@ const StudySetup: React.FC = () => {
           !res.ok ||
           (data.mode !== 'hosted' && data.mode !== 'standalone') ||
           typeof data.hasAnthropicKey !== 'boolean' ||
-          typeof data.hasGeminiKey !== 'boolean'
+          typeof data.hasGeminiKey !== 'boolean' ||
+          (data.hasOpenAiKey !== undefined && typeof data.hasOpenAiKey !== 'boolean') ||
+          (data.hasOpenRouterKey !== undefined && typeof data.hasOpenRouterKey !== 'boolean')
         ) {
           throw new Error(data.error || 'Invalid provider status response');
         }
-        if (!cancelled) setConfigStatus(data as ConfigStatus);
+        if (!cancelled) {
+          setConfigStatus({
+            mode: data.mode,
+            hasAnthropicKey: data.hasAnthropicKey,
+            hasGeminiKey: data.hasGeminiKey,
+            // A legacy status response predating these providers is safe to
+            // interpret as not configured; malformed present values fail closed.
+            hasOpenAiKey: data.hasOpenAiKey === true,
+            hasOpenRouterKey: data.hasOpenRouterKey === true,
+          });
+        }
       } catch (error) {
         console.error('Could not verify configured AI providers:', error);
         if (!cancelled) {
@@ -194,8 +228,12 @@ const StudySetup: React.FC = () => {
           if (config.topicAreas?.length) setTopicAreas(config.topicAreas);
           if (config.profileSchema?.length) setProfileSchema(config.profileSchema);
           if (config.aiBehavior) setAiBehavior(config.aiBehavior);
-          if (config.aiProvider) setAiProvider(config.aiProvider);
-          if (config.aiModel) setAiModel(config.aiModel);
+          if (config.aiProvider) {
+            setAiProvider(config.aiProvider);
+            setAiModel(config.aiModel || DEFAULT_MODEL_BY_PROVIDER[config.aiProvider]);
+          } else if (config.aiModel) {
+            setAiModel(config.aiModel);
+          }
           if (config.enableReasoning !== undefined) setEnableReasoning(config.enableReasoning);
           if (config.linkExpiration) setLinkExpiration(config.linkExpiration);
           if (config.consentText) setConsentText(config.consentText);
@@ -239,8 +277,9 @@ const StudySetup: React.FC = () => {
       setTopicAreas(studyConfig.topicAreas.length > 0 ? studyConfig.topicAreas : ['']);
       setProfileSchema(studyConfig.profileSchema || []);
       setAiBehavior(studyConfig.aiBehavior);
-      setAiProvider(studyConfig.aiProvider || 'gemini');
-      setAiModel(studyConfig.aiModel || (studyConfig.aiProvider === 'claude' ? DEFAULT_CLAUDE_MODEL : DEFAULT_GEMINI_MODEL));
+      const provider = studyConfig.aiProvider || 'gemini';
+      setAiProvider(provider);
+      setAiModel(studyConfig.aiModel || DEFAULT_MODEL_BY_PROVIDER[provider]);
       setEnableReasoning(studyConfig.enableReasoning);
       setLinkExpiration(studyConfig.linkExpiration || 'never');
       setConsentText(studyConfig.consentText);
@@ -346,8 +385,13 @@ const StudySetup: React.FC = () => {
   };
 
   const selectedProviderConfigured = isProviderConfigured(aiProvider, configStatus);
-  const selectedProviderName = aiProvider === 'claude' ? 'Anthropic Claude' : 'Google Gemini';
-  const selectedProviderEnvName = aiProvider === 'claude' ? 'ANTHROPIC_API_KEY' : 'GEMINI_API_KEY';
+  const selectedProvider = PROVIDER_OPTIONS.find(provider => provider.id === aiProvider)!;
+  const selectedProviderName = selectedProvider.label;
+  const selectedProviderEnvName = PROVIDER_ENV_NAME[aiProvider];
+  const selectedProviderModels = PROVIDER_MODELS[aiProvider];
+  const isCustomOpenRouterModel = aiProvider === 'openrouter'
+    && !PROVIDER_MODELS.openrouter.some(model => model.id === aiModel);
+  const selectedModelValid = isKnownProviderModel(aiProvider, aiModel);
   const providerUnavailableMessage = configStatusError
     || (configStatus
       ? `${selectedProviderName} is not configured for this ${configStatus.mode === 'hosted' ? 'account' : 'deployment'}.`
@@ -359,9 +403,20 @@ const StudySetup: React.FC = () => {
     return false;
   };
 
+  const requireValidModel = (reportError: (message: string) => void) => {
+    if (selectedModelValid) return true;
+    reportError(
+      aiProvider === 'openrouter'
+        ? 'Enter a valid OpenRouter provider/model slug before continuing.'
+        : `Choose a supported ${selectedProviderName} model before continuing.`
+    );
+    return false;
+  };
+
   const handlePreview = async () => {
     if (!requireResearcherAuth()) return;
     if (!requireConfiguredProvider(setSaveError)) return;
+    if (!requireValidModel(setSaveError)) return;
     if (!savedStudyId || isDirty) {
       setSaveError('Save this study before previewing the version participants will receive.');
       return;
@@ -376,7 +431,6 @@ const StudySetup: React.FC = () => {
       }
       const data = await response.json();
       useStore.getState().resetParticipant();
-      setParticipantToken(null);
       setStudyConfig(data.study.config);
       setViewMode('preview');
       setStep('consent');
@@ -395,6 +449,7 @@ const StudySetup: React.FC = () => {
       return;
     }
     if (!requireConfiguredProvider(setLinkError)) return;
+    if (!requireValidModel(setLinkError)) return;
     if (!savedStudyId || isDirty) {
       setLinkError('Save this study before generating a participant link.');
       return;
@@ -456,6 +511,7 @@ const StudySetup: React.FC = () => {
       return; // Auth check in progress - button should be disabled anyway
     }
     if (!requireConfiguredProvider(setSaveError)) return;
+    if (!requireValidModel(setSaveError)) return;
 
     setIsSaving(true);
     setSaveSuccess(false);
@@ -564,7 +620,8 @@ const StudySetup: React.FC = () => {
     }
   };
 
-  const isValid = name.trim() && researchQuestion.trim();
+  const hasRequiredFields = Boolean(name.trim() && researchQuestion.trim());
+  const isValid = hasRequiredFields && selectedModelValid;
 
   const behaviorOptions: { id: AIBehavior; label: string; desc: string }[] = [
     {
@@ -584,18 +641,9 @@ const StudySetup: React.FC = () => {
     }
   ];
 
-  const providerOptions: { id: AIProviderType; label: string; desc: string }[] = [
-    {
-      id: 'gemini',
-      label: 'Google Gemini',
-      desc: 'Fast, cost-effective. Best for high-volume studies.'
-    },
-    {
-      id: 'claude',
-      label: 'Anthropic Claude',
-      desc: 'Nuanced responses. Best for complex, exploratory interviews.'
-    }
-  ];
+  const providerOptions = configStatus?.mode === 'hosted'
+    ? PROVIDER_OPTIONS.filter(provider => isProviderConfigured(provider.id, configStatus))
+    : PROVIDER_OPTIONS;
 
   const availablePresets = PROFILE_PRESETS.filter(
     preset => !profileSchema.some(f => f.id === preset.id)
@@ -631,11 +679,11 @@ const StudySetup: React.FC = () => {
                 <Lightbulb size={16} />
                 Load Example
               </button>
-              {isValid && (
+              {hasRequiredFields && (
                 <>
                   <button
                     onClick={handleSaveStudy}
-                    disabled={!isAuthenticated || !selectedProviderConfigured || isSaving || (!!savedStudyId && !isDirty)}
+                    disabled={!isAuthenticated || !selectedProviderConfigured || !selectedModelValid || isSaving || (!!savedStudyId && !isDirty)}
                     className={`px-4 py-2 text-sm rounded-xl transition-colors flex items-center gap-2 disabled:cursor-not-allowed ${
                       savePending
                         ? 'bg-amber-900/50 text-amber-300 border border-amber-700'
@@ -985,6 +1033,11 @@ const StudySetup: React.FC = () => {
               Choose which AI model powers your interviews
             </p>
             <div className="space-y-2">
+              {providerOptions.length === 0 ? (
+                <p className="rounded-xl border border-amber-700/50 bg-amber-900/30 p-4 text-sm text-amber-200">
+                  No AI provider keys are configured for this hosted account. Add one in Account &amp; connections.
+                </p>
+              ) : null}
               {providerOptions.map((option) => (
                 <label
                   key={option.id}
@@ -1001,7 +1054,7 @@ const StudySetup: React.FC = () => {
                     onChange={() => {
                       setAiProvider(option.id);
                       // Reset model to provider's default when switching providers
-                      setAiModel(option.id === 'claude' ? DEFAULT_CLAUDE_MODEL : DEFAULT_GEMINI_MODEL);
+                      setAiModel(DEFAULT_MODEL_BY_PROVIDER[option.id]);
                       setIsDirty(true);
                     }}
                     className="mt-1 accent-stone-500"
@@ -1009,6 +1062,11 @@ const StudySetup: React.FC = () => {
                   <div>
                     <div className="font-medium text-stone-100">{option.label}</div>
                     <div className="text-xs text-stone-400">{option.desc}</div>
+                    {option.id === 'openrouter' ? (
+                      <div className="mt-1 text-xs text-stone-400">
+                        Requests go to OpenRouter and a ZDR-compatible upstream inference provider selected for the model.
+                      </div>
+                    ) : null}
                   </div>
                 </label>
               ))}
@@ -1016,32 +1074,66 @@ const StudySetup: React.FC = () => {
 
             {/* Model Selection */}
             <div className="mt-4 space-y-2">
-              <label className="block text-sm font-medium text-stone-300">
+              <label htmlFor="study-ai-model" className="block text-sm font-medium text-stone-300">
                 Model
               </label>
               <select
-                value={aiModel}
-                onChange={(e) => { setAiModel(e.target.value); setIsDirty(true); }}
+                id="study-ai-model"
+                value={isCustomOpenRouterModel ? '__custom__' : aiModel}
+                onChange={(event) => {
+                  setAiModel(event.target.value === '__custom__' ? '' : event.target.value);
+                  setIsDirty(true);
+                }}
                 className="w-full px-4 py-3 rounded-xl bg-stone-800 border border-stone-600 text-stone-100 focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-stone-500"
               >
-                {(aiProvider === 'gemini' ? GEMINI_MODELS : CLAUDE_MODELS).map((model) => (
+                {selectedProviderModels.map((model) => (
                   <option key={model.id} value={model.id}>
                     {model.label}
                   </option>
                 ))}
+                {aiProvider === 'openrouter' ? <option value="__custom__">Custom provider/model ID…</option> : null}
               </select>
-              <p className="text-xs text-stone-500">
-                {(aiProvider === 'gemini' ? GEMINI_MODELS : CLAUDE_MODELS).find(m => m.id === aiModel)?.desc || ''}
+              <p className="text-xs text-stone-400">
+                {selectedProviderModels.find(model => model.id === aiModel)?.desc
+                  || (isCustomOpenRouterModel
+                    ? 'Custom OpenRouter model; privacy and structured-output requirements still fail closed at request time.'
+                    : '')}
               </p>
+              {aiProvider === 'openrouter' && isCustomOpenRouterModel ? (
+                <div className="space-y-1">
+                  <label htmlFor="study-openrouter-custom-model" className="block text-sm font-medium text-stone-300">
+                    OpenRouter model ID
+                  </label>
+                  <input
+                    id="study-openrouter-custom-model"
+                    type="text"
+                    value={aiModel}
+                    maxLength={200}
+                    onChange={(event) => { setAiModel(event.target.value); setIsDirty(true); }}
+                    aria-invalid={!selectedModelValid}
+                    aria-describedby="study-openrouter-model-help"
+                    placeholder="provider/model"
+                    autoComplete="off"
+                    className="w-full px-4 py-3 rounded-xl bg-stone-800 border border-stone-600 text-stone-100 placeholder-stone-500 focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-stone-500"
+                  />
+                  <p
+                    id="study-openrouter-model-help"
+                    className="text-xs text-stone-400"
+                  >
+                    Use a provider/model slug of at most 200 characters. Automatic routing is not supported.
+                  </p>
+                </div>
+              ) : null}
             </div>
 
-            {/* Gemini reasoning mode. Claude forced structured tools currently
-                do not support manual extended-thinking controls. */}
+            {/* Keep the legacy reasoning control Gemini-only until the stored
+                study contract supports provider-specific reasoning options. */}
             {aiProvider === 'gemini' && <div className="mt-4 space-y-2">
-              <label className="block text-sm font-medium text-stone-300">
+              <label htmlFor="study-reasoning-mode" className="block text-sm font-medium text-stone-300">
                 AI Reasoning Mode
               </label>
               <select
+                id="study-reasoning-mode"
                 value={enableReasoning === undefined ? 'auto' : enableReasoning ? 'on' : 'off'}
                 onChange={(e) => {
                   const v = e.target.value;
@@ -1058,6 +1150,20 @@ const StudySetup: React.FC = () => {
                 Automatic lets Gemini choose a supported interview budget and uses high thinking for synthesis. Minimize uses each model&apos;s lowest supported interview setting and the synthesis model&apos;s low setting.
               </p>
             </div>}
+
+            {!selectedModelValid ? (
+              <div
+                role="alert"
+                className="flex items-start gap-3 rounded-xl border border-red-700/50 bg-red-900/20 p-4"
+              >
+                <AlertTriangle size={18} className="mt-0.5 shrink-0 text-red-400" />
+                <p className="text-sm text-red-200">
+                  {aiProvider === 'openrouter'
+                    ? 'Enter a valid OpenRouter provider/model slug. Automatic routing is not supported.'
+                    : `Choose a supported ${selectedProviderName} model.`}
+                </p>
+              </div>
+            ) : null}
 
             {isAuthenticated === true && !configStatus && !configStatusError && (
               <div

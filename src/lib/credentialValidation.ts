@@ -63,7 +63,7 @@ function invalidStatus(status: number): boolean {
 }
 
 export async function validateAiCredential(
-  provider: 'gemini' | 'claude',
+  provider: 'gemini' | 'claude' | 'openai' | 'openrouter',
   apiKey: string,
   timeoutMs = DEFAULT_TIMEOUT_MS
 ): Promise<CredentialValidationResult> {
@@ -72,14 +72,18 @@ export async function validateAiCredential(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = provider === 'gemini'
-      ? await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1', {
+    let response: Response;
+    switch (provider) {
+      case 'gemini':
+        response = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1', {
           method: 'GET',
           headers: { 'x-goog-api-key': apiKey },
           signal: controller.signal,
           cache: 'no-store',
-        })
-      : await fetch('https://api.anthropic.com/v1/models?limit=1', {
+        });
+        break;
+      case 'claude':
+        response = await fetch('https://api.anthropic.com/v1/models?limit=1', {
           method: 'GET',
           headers: {
             'x-api-key': apiKey,
@@ -88,6 +92,24 @@ export async function validateAiCredential(
           signal: controller.signal,
           cache: 'no-store',
         });
+        break;
+      case 'openai':
+        response = await fetch('https://api.openai.com/v1/models', {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${apiKey}` },
+          signal: controller.signal,
+          cache: 'no-store',
+        });
+        break;
+      case 'openrouter':
+        response = await fetch('https://openrouter.ai/api/v1/key', {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${apiKey}` },
+          signal: controller.signal,
+          cache: 'no-store',
+        });
+        break;
+    }
 
     if (response.ok) return { valid: true };
     return { valid: false, reason: invalidStatus(response.status) ? 'invalid' : 'unavailable' };

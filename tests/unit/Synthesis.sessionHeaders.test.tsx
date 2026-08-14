@@ -8,7 +8,7 @@ const serviceMocks = vi.hoisted(() => ({
   saveCompletedInterview: vi.fn(),
 }));
 
-vi.mock('@/services/geminiService', () => ({
+vi.mock('@/services/interviewApi', () => ({
   synthesizeInterview: serviceMocks.synthesizeInterview,
 }));
 vi.mock('@/services/storageService', () => ({
@@ -45,7 +45,6 @@ beforeEach(() => {
       contradictions: [],
     },
     participantProfile: null,
-    participantToken: null,
     participantSessionHandle: 'participant-handle-a-123456',
     viewMode: 'participant',
     synthesis: null,
@@ -62,13 +61,11 @@ describe('Synthesis participant-session propagation', () => {
       expect.objectContaining({ id: 'study-a' }),
       expect.any(Object),
       null,
-      null,
       false,
       'participant-handle-a-123456'
     );
     expect(serviceMocks.saveCompletedInterview).toHaveBeenCalledWith(
       expect.objectContaining({ studyId: 'study-a', synthesis }),
-      null,
       false,
       'participant-handle-a-123456'
     );

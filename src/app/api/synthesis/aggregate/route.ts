@@ -5,11 +5,14 @@
 export const dynamic = 'force-dynamic';
 
 import { NextResponse } from 'next/server';
-import { getInterviewProvider } from '@/lib/providers';
-import { getRequestContext } from '@/lib/researcherContext';
+import {
+  getInterviewProvider,
+} from '@/lib/providers';
+import { getRequestContext, providerKeysFromContext } from '@/lib/researcherContext';
 import { configurationRequiredResponse } from '@/lib/researcherAccess';
 import { getStudy, getStudyInterviewsChecked, isKVAvailable } from '@/lib/kv';
 import { providerErrorResponse } from '@/lib/providerErrors';
+import { createAggregateSynthesisReceipt } from '@/lib/synthesisReceipt';
 import { hostedAiRateLimitResponse } from '@/lib/platformAiRateLimit';
 import { AggregateSynthesisResult, SynthesisResult } from '@/types';
 import { readBoundedJsonObject } from '@/lib/requestBody';
@@ -27,7 +30,7 @@ export async function POST(request: Request) {
     const kvAvailable = await isKVAvailable(context.kvClient);
     if (!kvAvailable) {
       return NextResponse.json(
-        { error: 'Storage not configured. Connect Vercel KV to enable this feature.' },
+        { error: 'Storage not configured. Connect Upstash Redis to enable this feature.' },
         { status: 503 }
       );
     }
@@ -100,11 +103,16 @@ export async function POST(request: Request) {
     );
     if (platformLimited) return platformLimited;
 
-    // Get the configured AI provider with researcher's API keys
-    const provider = getInterviewProvider(study.config, {
-      geminiApiKey: context.geminiApiKey,
-      anthropicApiKey: context.anthropicApiKey,
-    });
+    // Get the configured AI provider with researcher's API keys.
+    let provider;
+    try {
+      provider = getInterviewProvider(study.config, providerKeysFromContext(context));
+    } catch {
+      return NextResponse.json(
+        { error: 'AI provider is not configured on the server.' },
+        { status: 502 }
+      );
+    }
 
     // Generate aggregate synthesis
     let aggregateResult;
@@ -120,17 +128,21 @@ export async function POST(request: Request) {
 
     // Build full result with metadata
     const fullResult: AggregateSynthesisResult = {
+      ...aggregateResult.value,
       studyId,
       studyRevision: study.revision,
       interviewIds: currentRevisionInterviews.map(interview => interview.id),
       interviewCount: currentRevisionInterviews.length,
-      aiProvider: study.config.aiProvider ?? 'gemini',
-      aiModel: study.config.aiModel ?? 'default',
-      ...aggregateResult,
+      aiProvider: aggregateResult.execution.provider,
+      requestedAiModel: aggregateResult.execution.requestedModel,
+      aiModel: aggregateResult.execution.model,
+      routedProvider: aggregateResult.execution.routedProvider,
       generatedAt: Date.now()
     };
 
-    return NextResponse.json({ synthesis: fullResult });
+    const receipt = await createAggregateSynthesisReceipt(fullResult);
+
+    return NextResponse.json({ synthesis: { ...fullResult, _receipt: receipt } });
   } catch (error) {
     console.error('Aggregate synthesis API error:', error);
     return NextResponse.json(

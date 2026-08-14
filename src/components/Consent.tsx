@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { useStore } from '@/store';
 import { Shield, ArrowRight, ArrowLeft, MessageSquare, Clock, HelpCircle, Loader2 } from 'lucide-react';
+import { PROVIDER_OPTIONS } from '@/lib/providerRegistry';
 
 const Consent: React.FC = () => {
   const router = useRouter();
@@ -70,8 +71,17 @@ const Consent: React.FC = () => {
     );
   }
 
+  const selectedProviderId = studyConfig.aiProvider;
+  const selectedProviderName = PROVIDER_OPTIONS.find(provider => provider.id === selectedProviderId)?.label;
+  const providerConfigurationReady = Boolean(selectedProviderId && selectedProviderName && studyConfig.aiModel);
+  const providerDisclosure = !providerConfigurationReady
+    ? 'The researcher must review and save this study\'s AI provider settings before interviews can begin.'
+    : selectedProviderId === 'openrouter'
+    ? 'Your responses are sent to OpenRouter and a ZDR-compatible upstream inference provider selected for that model.'
+    : `Your responses are sent to ${selectedProviderName}.`;
+
   return (
-    <div className="min-h-screen bg-stone-900 flex items-center justify-center p-8">
+    <div className="min-h-screen bg-stone-900 flex items-center justify-center p-4 sm:p-8">
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
@@ -90,7 +100,7 @@ const Consent: React.FC = () => {
           </div>
 
           {/* Content */}
-          <div className="p-6 space-y-6">
+          <div className="p-4 space-y-6 sm:p-6">
             <div className="prose prose-sm max-w-none text-stone-300">
               <p className="whitespace-pre-wrap">{studyConfig.consentText}</p>
             </div>
@@ -145,12 +155,19 @@ const Consent: React.FC = () => {
             </div>
 
             <div className="bg-stone-800 border border-stone-600 rounded-xl p-4 text-sm text-stone-300">
-              <strong className="text-stone-100">Data notice:</strong> Your responses are sent to the AI provider selected by the researcher and stored according to this study&apos;s setup. Do not include information you do not want to share. Contact the researcher for retention, access, and deletion details.
+              <strong className="text-stone-100">Data notice:</strong> {providerDisclosure} The researcher is the
+              study&apos;s data controller and controls its storage and retention settings. Do not include information
+              you do not want to share. Contact the researcher for retention, access, and deletion details.
             </div>
+            {!providerConfigurationReady && (
+              <p role="alert" className="text-sm text-amber-200 bg-amber-950/40 border border-amber-800 rounded-lg px-3 py-2">
+                This interview is unavailable until the researcher reviews and saves its AI provider settings.
+              </p>
+            )}
           </div>
 
           {/* Actions */}
-          <div className="p-6 pt-0 space-y-3">
+          <div className="p-4 pt-0 space-y-3 sm:p-6 sm:pt-0">
             {consentError && (
               <p role="alert" className="text-sm text-red-300 bg-red-950/40 border border-red-800 rounded-lg px-3 py-2">
                 {consentError}
@@ -168,7 +185,7 @@ const Consent: React.FC = () => {
             )}
             <button
               onClick={handleConsent}
-              disabled={isSubmitting}
+              disabled={isSubmitting || !providerConfigurationReady}
               aria-busy={isSubmitting}
               className="flex-1 py-3 bg-stone-600 hover:bg-stone-500 text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >

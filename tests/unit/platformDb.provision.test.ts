@@ -15,7 +15,7 @@ vi.mock('@/lib/kvClient', () => ({
   } as unknown as Redis),
 }));
 
-import { provisionResearcherByOAuth } from '@/lib/platformDb';
+import { provisionResearcherByOAuth, toResearcherProfile } from '@/lib/platformDb';
 
 const existing = {
   id: 'researcher-existing',
@@ -61,6 +61,17 @@ describe('provisionResearcherByOAuth', () => {
     expect(keys[0]).toBe('oauth:google:google-1');
     expect(keys[1]).toBe('email:ada@example.com');
     expect(args[1]).toContain('"email":"ada@example.com"');
+    expect(args[1]).toContain('"encryptedOpenAiApiKey":null');
+    expect(args[1]).toContain('"encryptedOpenRouterApiKey":null');
+  });
+
+  it('treats provider fields missing from legacy account records as unconfigured', () => {
+    expect(toResearcherProfile(existing)).toMatchObject({
+      hasGeminiKey: false,
+      hasAnthropicKey: false,
+      hasOpenAiKey: false,
+      hasOpenRouterKey: false,
+    });
   });
 
   it('returns found for an existing oauth identity and does not create a second account', async () => {

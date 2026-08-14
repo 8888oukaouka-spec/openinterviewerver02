@@ -1,5 +1,5 @@
 // Storage Service - Client-side interface for interview storage
-// Calls API routes which interact with Vercel KV
+// Calls API routes which interact with Upstash Redis
 
 import { StoredInterview, StoredStudy } from '@/types';
 
@@ -21,7 +21,6 @@ export type StudyReconciliationResult = {
 // Save completed interview
 export async function saveCompletedInterview(
   interview: Omit<StoredInterview, 'completedAt' | 'status'>,
-  participantToken?: string | null,
   researcherPreview = false,
   participantSessionHandle?: string | null
 ): Promise<{ success: boolean; id: string; preview?: boolean }> {

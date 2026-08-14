@@ -153,6 +153,8 @@ export async function provisionResearcherByOAuth(input: {
     encryptedRedisToken: null,
     encryptedGeminiApiKey: null,
     encryptedAnthropicApiKey: null,
+    encryptedOpenAiApiKey: null,
+    encryptedOpenRouterApiKey: null,
     redisConfiguredAt: null,
   };
 
@@ -368,6 +370,8 @@ type CredentialPatch = Partial<Pick<
   | 'encryptedRedisToken'
   | 'encryptedGeminiApiKey'
   | 'encryptedAnthropicApiKey'
+  | 'encryptedOpenAiApiKey'
+  | 'encryptedOpenRouterApiKey'
   | 'redisConfiguredAt'
   | 'onboardingComplete'
 >>;
@@ -998,5 +1002,7 @@ export function toResearcherProfile(account: ResearcherAccount): ResearcherProfi
     hasRedisConfigured: !!account.encryptedRedisUrl,
     hasGeminiKey: !!account.encryptedGeminiApiKey,
     hasAnthropicKey: !!account.encryptedAnthropicApiKey,
+    hasOpenAiKey: !!account.encryptedOpenAiApiKey,
+    hasOpenRouterKey: !!account.encryptedOpenRouterApiKey,
   };
 }

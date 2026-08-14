@@ -17,8 +17,10 @@ const participantLinksMock = vi.hoisted(() => ({
 
 vi.mock('@/lib/participantLinks', () => participantLinksMock);
 
-vi.mock('@/lib/kv', () => ({ getStudyChecked: vi.fn() }));
-vi.mock('@/lib/researcherAccess', () => ({ configurationRequiredResponse: vi.fn() }));
+const kvMock = vi.hoisted(() => ({ getStudyChecked: vi.fn() }));
+vi.mock('@/lib/kv', () => kvMock);
+const accessMock = vi.hoisted(() => ({ configurationRequiredResponse: vi.fn() }));
+vi.mock('@/lib/researcherAccess', () => accessMock);
 vi.mock('@/lib/mode', () => ({ isHostedMode: vi.fn(() => false) }));
 vi.mock('@/lib/platformDb', () => ({
   consumePlatformRateLimit: vi.fn(),
@@ -26,7 +28,7 @@ vi.mock('@/lib/platformDb', () => ({
 }));
 vi.mock('@/lib/appBaseUrl', () => ({ getAppBaseUrl: vi.fn(() => 'http://localhost') }));
 
-import { GET } from '@/app/api/generate-link/route';
+import { GET, POST } from '@/app/api/generate-link/route';
 
 const handleA = '00000000-0000-4000-8000-000000000001';
 const handleB = '00000000-0000-4000-8000-000000000002';
@@ -48,6 +50,18 @@ beforeEach(() => {
   contextMock.getParticipantRequestContext.mockResolvedValue({
     valid: true,
     study: { id: 'study-a', config: studyConfig, revision: 1 },
+  });
+  accessMock.configurationRequiredResponse.mockReturnValue(null);
+  contextMock.getRequestContext.mockResolvedValue({
+    authorized: true,
+    context: {
+      kvClient: {},
+      geminiApiKey: 'gemini-key',
+      anthropicApiKey: null,
+      openaiApiKey: null,
+      openrouterApiKey: null,
+    },
+    researcherId: null,
   });
 });
 
@@ -78,5 +92,55 @@ describe('GET /api/generate-link participant-session exchange', () => {
     expect(cookieA).toContain('HttpOnly');
     expect(cookieB).toContain('HttpOnly');
     expect(cookieA).not.toBe(cookieB);
+  });
+});
+
+describe('POST /api/generate-link provider readiness', () => {
+  it('does not mint a link for a legacy study without explicit provider provenance', async () => {
+    const legacyConfig = { ...studyConfig };
+    delete legacyConfig.aiProvider;
+    delete legacyConfig.aiModel;
+    kvMock.getStudyChecked.mockResolvedValue({
+      status: 'found',
+      study: { id: 'study-a', revision: 1, config: legacyConfig },
+    });
+
+    const response = await POST(new Request('http://localhost/api/generate-link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ studyConfig: { id: 'study-a' } }),
+    }));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ code: 'STUDY_REQUIRES_RESAVE' });
+    expect(participantLinksMock.createParticipantLinkRecord).not.toHaveBeenCalled();
+  });
+
+  it('does not mint a link for a study whose selected provider has no key', async () => {
+    kvMock.getStudyChecked.mockResolvedValue({
+      status: 'found',
+      study: {
+        id: 'study-a',
+        revision: 1,
+        config: {
+          ...studyConfig,
+          aiProvider: 'openrouter',
+          aiModel: 'openai/gpt-5.6-terra',
+        },
+      },
+    });
+
+    const response = await POST(new Request('http://localhost/api/generate-link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ studyConfig: { id: 'study-a' } }),
+    }));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: 'PROVIDER_NOT_CONFIGURED',
+      provider: 'openrouter',
+    });
+    expect(participantLinksMock.createParticipantLinkRecord).not.toHaveBeenCalled();
   });
 });

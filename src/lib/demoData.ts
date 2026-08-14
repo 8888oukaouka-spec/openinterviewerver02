@@ -1,5 +1,6 @@
-// Demo Data for OpenInterviewer
-// Provides realistic example study, interviews, and synthesis for demonstration
+// Authenticated sample-workspace records for OpenInterviewer.
+// This storage-backed fixture is separate from the public, in-memory /demo.
+// Export names and record IDs retain their demo prefix for compatibility.
 
 import {
   StoredStudy,
@@ -9,7 +10,7 @@ import {
   SynthesisResult,
   ParticipantProfile,
   BehaviorData,
-  AggregateSynthesisResult
+  DEFAULT_GEMINI_MODEL,
 } from '@/types';
 
 // ============================================
@@ -17,6 +18,7 @@ import {
 // ============================================
 
 const DEMO_STUDY_ID = 'demo-study-adaptive-self';
+const DEMO_STUDY_REVISION = 1;
 
 export const DEMO_STUDY_CONFIG: StudyConfig = {
   id: DEMO_STUDY_ID,
@@ -46,6 +48,7 @@ export const DEMO_STUDY_CONFIG: StudyConfig = {
   ],
   aiBehavior: 'standard',
   aiProvider: 'gemini',
+  aiModel: DEFAULT_GEMINI_MODEL,
   enableReasoning: true,
   consentText: 'This interview is part of a research study on professional adaptation to AI tools. Your responses will be anonymized and used for research purposes only. The interview takes approximately 15-20 minutes. You may skip any question or end the interview at any time.',
   createdAt: Date.now() - 7 * 24 * 60 * 60 * 1000 // 7 days ago
@@ -58,7 +61,7 @@ export const DEMO_STORED_STUDY: StoredStudy = {
   updatedAt: Date.now() - 2 * 24 * 60 * 60 * 1000,
   interviewCount: 3,
   isLocked: true,
-  revision: 1
+  revision: DEMO_STUDY_REVISION
 };
 
 // ============================================
@@ -159,7 +162,8 @@ export const SARAH_INTERVIEW: StoredInterview = {
   behaviorData: SARAH_BEHAVIOR,
   createdAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
   completedAt: Date.now() - 5 * 24 * 60 * 60 * 1000 + 1200000,
-  status: 'completed'
+  status: 'completed',
+  studyRevision: DEMO_STUDY_REVISION
 };
 
 // ============================================
@@ -260,7 +264,8 @@ export const MARCUS_INTERVIEW: StoredInterview = {
   behaviorData: MARCUS_BEHAVIOR,
   createdAt: Date.now() - 4 * 24 * 60 * 60 * 1000,
   completedAt: Date.now() - 4 * 24 * 60 * 60 * 1000 + 1200000,
-  status: 'completed'
+  status: 'completed',
+  studyRevision: DEMO_STUDY_REVISION
 };
 
 // ============================================
@@ -362,90 +367,8 @@ export const PRIYA_INTERVIEW: StoredInterview = {
   behaviorData: PRIYA_BEHAVIOR,
   createdAt: Date.now() - 3 * 24 * 60 * 60 * 1000,
   completedAt: Date.now() - 3 * 24 * 60 * 60 * 1000 + 1200000,
-  status: 'completed'
-};
-
-// ============================================
-// Demo Aggregate Synthesis
-// ============================================
-
-export const DEMO_AGGREGATE_SYNTHESIS: AggregateSynthesisResult = {
-  studyId: DEMO_STUDY_ID,
-  studyRevision: 1,
-  interviewIds: ['demo-interview-1', 'demo-interview-2', 'demo-interview-3'],
-  interviewCount: 3,
-  aiProvider: 'gemini',
-  aiModel: 'demo-scripted',
-  commonThemes: [
-    {
-      theme: 'Role Evolution from Execution to Judgment',
-      frequency: 3,
-      representativeQuotes: [
-        '"It\'s like I got promoted without changing jobs" - Sarah',
-        '"I provide the taste" - Marcus',
-        '"My job has shifted from writing to editing and refining" - Priya'
-      ]
-    },
-    {
-      theme: 'Skill Atrophy Concerns',
-      frequency: 3,
-      representativeQuotes: [
-        '"My writing used to be really sharp... now it feels rustier" - Sarah',
-        '"I didn\'t spend 15 years mastering Photoshop to have a machine do it" - Marcus\'s colleague',
-        '"I spend more time fixing AI prose than crafting my own" - Priya'
-      ]
-    },
-    {
-      theme: 'Social Navigation Required',
-      frequency: 3,
-      representativeQuotes: [
-        '"I have to be careful not to make them feel slow" - Sarah',
-        '"Junior designers love it... senior peers are really resistant" - Marcus',
-        '"There\'s this unspoken sense of shame" - Priya'
-      ]
-    },
-    {
-      theme: 'Identity Reframing as Adaptation Strategy',
-      frequency: 3,
-      representativeQuotes: [
-        '"PMs who embrace AI will become more like mini-CEOs" - Sarah',
-        '"Designers become more like creative directors" - Marcus',
-        '"Investigative pieces, deeply human stories - that\'s what I want to focus on" - Priya'
-      ]
-    }
-  ],
-  divergentViews: [
-    {
-      topic: 'Emotional Relationship with AI',
-      viewA: 'Sarah: Enthusiastic amplifier - AI as pure capability expansion',
-      viewB: 'Priya: Conflicted user - AI as efficiency gain with authenticity costs'
-    },
-    {
-      topic: 'Path to Adoption',
-      viewA: 'Sarah: Self-driven early adopter, intrinsically motivated',
-      viewB: 'Marcus: Skeptic converted through external push and direct experience'
-    },
-    {
-      topic: 'Transparency Concerns',
-      viewA: 'Sarah & Marcus: Focused on personal capability, not disclosure',
-      viewB: 'Priya: Wrestling with ethical questions about audience trust'
-    }
-  ],
-  keyFindings: [
-    'AI adoption triggers identity renegotiation across all professions studied, with professionals redefining their value from execution to judgment, curation, and strategic thinking',
-    'Even enthusiastic adopters harbor concerns about skill atrophy, suggesting this is a near-universal anxiety regardless of adoption stance',
-    'AI speed differentials create new social dynamics in teams, requiring active management and creating generational tensions',
-    'Different professions face different ethical tensions - creative/media fields especially grapple with authenticity and disclosure questions',
-    'Successful adaptation involves finding new mental models ("I provide the taste," "mini-CEO") that preserve professional identity while incorporating AI capabilities'
-  ],
-  researchImplications: [
-    'Training programs should address both tool proficiency and identity/value reframing',
-    'Organizations need explicit norms around AI disclosure and team dynamics',
-    'Future research should explore how skill atrophy concerns affect long-term career development',
-    'Industry-specific ethical frameworks for AI use may be needed, especially in creative/media fields'
-  ],
-  bottomLine: 'Across three knowledge workers in different fields, AI adoption emerges as fundamentally an identity challenge rather than a skills challenge. All participants successfully use AI tools, but their deeper work involves redefining professional value and navigating social and ethical complexities. The enthusiastic (Sarah), converted skeptic (Marcus), and ethically conflicted (Priya) represent different positions on a shared journey of professional redefinition in the AI age.',
-  generatedAt: Date.now() - 1 * 24 * 60 * 60 * 1000
+  status: 'completed',
+  studyRevision: DEMO_STUDY_REVISION
 };
 
 // ============================================

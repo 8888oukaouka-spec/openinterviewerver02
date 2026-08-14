@@ -38,7 +38,6 @@ beforeEach(() => {
     setStep: vi.fn(),
     loadExampleStudy: vi.fn(),
     setViewMode: vi.fn(),
-    setParticipantToken: vi.fn(),
   };
 });
 
@@ -63,6 +62,8 @@ describe('hosted study operation recovery UI', () => {
     await waitFor(() => expect(storageMock.getAllStudies).toHaveBeenCalled());
     expect(calls).toEqual(['reconcile', 'list']);
     expect(await screen.findByText('Pending study changes were reconciled successfully.')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Load Sample' })).toHaveLength(2);
+    expect(screen.queryByText(/load demo data/i)).not.toBeInTheDocument();
   });
 
   it('surfaces a create 202 as repair-pending and does not navigate as completed', async () => {

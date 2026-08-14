@@ -99,7 +99,7 @@ const Landing: React.FC = () => {
               <h2 className="font-semibold text-white">Configured researcher workspace</h2>
             </div>
             <p className="mt-2 text-sm leading-6 text-stone-400">
-              Sign in to a deployment that already has working storage and provider access.
+              Sign in to your workspace. Hosted mode guides you through connecting your own provider and storage; standalone uses the operator&apos;s configuration.
             </p>
             <span className="mt-4 inline-flex items-center gap-2 text-sm font-medium text-stone-200 group-hover:text-white">
               Researcher sign in <ArrowRight aria-hidden="true" size={16} />

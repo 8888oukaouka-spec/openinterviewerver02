@@ -4,7 +4,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { useStore } from '@/store';
-import { synthesizeInterview } from '@/services/geminiService';
+import { synthesizeInterview } from '@/services/interviewApi';
 import { saveCompletedInterview } from '@/services/storageService';
 import {
   Loader2,
@@ -30,7 +30,6 @@ const Synthesis: React.FC = () => {
     synthesis,
     setSynthesis,
     setStep,
-    participantToken,
     participantSessionHandle,
     viewMode
   } = useStore();
@@ -68,7 +67,7 @@ const Synthesis: React.FC = () => {
         synthesis: synthesisToSave,
         behaviorData: behaviorData,
         createdAt: participantProfile?.timestamp || Date.now()
-      }, participantToken, viewMode === 'preview', participantSessionHandle);
+      }, viewMode === 'preview', participantSessionHandle);
 
       setSaveStatus(saveResult.preview ? 'preview' : saveResult.success ? 'saved' : 'failed');
     } catch (error) {
@@ -118,13 +117,12 @@ const Synthesis: React.FC = () => {
           studyConfig,
           behaviorData,
           participantProfile,
-          participantToken,
           viewMode === 'preview',
           participantSessionHandle
         );
         setSynthesis(result);
 
-        // Save interview to KV after synthesis completes
+        // Save the interview to Upstash Redis after synthesis completes.
         await doSave(result);
       } catch (error) {
         console.error('Error synthesizing interview:', error);
@@ -136,7 +134,7 @@ const Synthesis: React.FC = () => {
     };
 
     analyzeAndSave();
-    // Note: behaviorData, participantProfile, participantToken are intentionally
+    // Note: behaviorData and participantProfile are intentionally
     // not in deps - we only want to analyze once when the page loads, not on updates
     // retryTrigger is included to allow manual retry after failure
     // eslint-disable-next-line react-hooks/exhaustive-deps

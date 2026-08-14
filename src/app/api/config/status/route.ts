@@ -37,6 +37,8 @@ export async function GET() {
         mode: 'hosted',
         hasAnthropicKey: profile.hasAnthropicKey,
         hasGeminiKey: profile.hasGeminiKey,
+        hasOpenAiKey: profile.hasOpenAiKey,
+        hasOpenRouterKey: profile.hasOpenRouterKey,
       });
     }
 
@@ -52,6 +54,8 @@ export async function GET() {
       mode: 'standalone',
       hasAnthropicKey: !!context.anthropicApiKey,
       hasGeminiKey: !!context.geminiApiKey,
+      hasOpenAiKey: !!context.openaiApiKey,
+      hasOpenRouterKey: !!context.openrouterApiKey,
     };
 
     return NextResponse.json(status);

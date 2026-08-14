@@ -52,7 +52,12 @@ export async function POST() {
     if (
       !researcher.encryptedRedisUrl
       || !researcher.encryptedRedisToken
-      || (!researcher.encryptedGeminiApiKey && !researcher.encryptedAnthropicApiKey)
+      || (
+        !researcher.encryptedGeminiApiKey
+        && !researcher.encryptedAnthropicApiKey
+        && !researcher.encryptedOpenAiApiKey
+        && !researcher.encryptedOpenRouterApiKey
+      )
     ) {
       return NextResponse.json({ error: 'Storage and at least one AI provider must be configured' }, { status: 400 });
     }
@@ -61,6 +66,8 @@ export async function POST() {
     let redisToken: string;
     let geminiApiKey: string | null = null;
     let anthropicApiKey: string | null = null;
+    let openAiApiKey: string | null = null;
+    let openRouterApiKey: string | null = null;
     try {
       redisUrl = decrypt(researcher.encryptedRedisUrl, { researcherId, purpose: 'redis-url' });
       redisToken = decrypt(researcher.encryptedRedisToken, { researcherId, purpose: 'redis-token' });
@@ -69,6 +76,12 @@ export async function POST() {
         : null;
       anthropicApiKey = researcher.encryptedAnthropicApiKey
         ? decrypt(researcher.encryptedAnthropicApiKey, { researcherId, purpose: 'anthropic-api-key' })
+        : null;
+      openAiApiKey = researcher.encryptedOpenAiApiKey
+        ? decrypt(researcher.encryptedOpenAiApiKey, { researcherId, purpose: 'openai-api-key' })
+        : null;
+      openRouterApiKey = researcher.encryptedOpenRouterApiKey
+        ? decrypt(researcher.encryptedOpenRouterApiKey, { researcherId, purpose: 'openrouter-api-key' })
         : null;
     } catch {
       return NextResponse.json({ error: 'Stored credentials could not be decrypted. Rotate them in settings.' }, { status: 409 });
@@ -85,6 +98,8 @@ export async function POST() {
     const aiValidations = await Promise.all([
       geminiApiKey ? validateAiCredential('gemini', geminiApiKey) : null,
       anthropicApiKey ? validateAiCredential('claude', anthropicApiKey) : null,
+      openAiApiKey ? validateAiCredential('openai', openAiApiKey) : null,
+      openRouterApiKey ? validateAiCredential('openrouter', openRouterApiKey) : null,
     ]);
     const validAi = aiValidations.some(result => result?.valid === true);
     if (!validAi) {

@@ -7,7 +7,7 @@ import { useStore } from '@/store';
 import {
   generateInterviewResponse,
   getInterviewGreeting
-} from '@/services/geminiService';
+} from '@/services/interviewApi';
 import { InterviewMessage, InterviewPhase } from '@/types';
 import ReactMarkdown from 'react-markdown';
 import {
@@ -47,7 +47,6 @@ const InterviewChat: React.FC = () => {
     completeInterview,
     updateProfileField,
     setProfileRawContext,
-    participantToken,
     participantSessionHandle,
     viewMode
   } = useStore();
@@ -96,7 +95,6 @@ const InterviewChat: React.FC = () => {
       try {
         const greeting = await getInterviewGreeting(
           studyConfig,
-          participantToken,
           viewMode === 'preview',
           participantSessionHandle
         );
@@ -120,7 +118,7 @@ const InterviewChat: React.FC = () => {
     };
 
     void initialize();
-  }, [studyConfig, interviewHistory.length, participantToken, participantSessionHandle, viewMode, addMessage, setAiThinking]);
+  }, [studyConfig, interviewHistory.length, participantSessionHandle, viewMode, addMessage, setAiThinking]);
 
   const handleSend = async (textOverride?: string) => {
     const text = textOverride || input;
@@ -153,7 +151,6 @@ const InterviewChat: React.FC = () => {
         participantProfile,
         questionProgress,
         currentContext,
-        participantToken,
         viewMode === 'preview',
         participantSessionHandle
       );
@@ -216,7 +213,6 @@ const InterviewChat: React.FC = () => {
       try {
         const greeting = await getInterviewGreeting(
           studyConfig,
-          participantToken,
           viewMode === 'preview',
           participantSessionHandle
         );

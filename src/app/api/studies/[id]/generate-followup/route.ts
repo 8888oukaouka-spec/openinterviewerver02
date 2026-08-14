@@ -5,14 +5,18 @@
 export const dynamic = 'force-dynamic';
 
 import { NextResponse } from 'next/server';
-import { getInterviewProvider } from '@/lib/providers';
-import { getRequestContext } from '@/lib/researcherContext';
+import {
+  getInterviewProvider,
+} from '@/lib/providers';
+import { getRequestContext, providerKeysFromContext } from '@/lib/researcherContext';
 import { configurationRequiredResponse } from '@/lib/researcherAccess';
 import { getStudyChecked, getStudyInterviewsChecked } from '@/lib/kv';
 import { AggregateSynthesisResult, StudyConfig } from '@/types';
 import { readBoundedJsonObject } from '@/lib/requestBody';
 import { validateAggregateSynthesisPayload } from '@/lib/providerValidation';
 import { hostedAiRateLimitResponse } from '@/lib/platformAiRateLimit';
+import { providerErrorResponse } from '@/lib/providerErrors';
+import { verifyAggregateSynthesisReceipt } from '@/lib/synthesisReceipt';
 
 export async function POST(
   request: Request,
@@ -57,6 +61,18 @@ export async function POST(
       );
     }
     const metadata = rawSynthesis as Partial<AggregateSynthesisResult>;
+    const receipt = metadata._receipt;
+    if (typeof receipt !== 'string') {
+      return NextResponse.json({ error: 'Aggregate synthesis receipt is missing.' }, { status: 403 });
+    }
+    const { _receipt: _discardedReceipt, ...unsignedSynthesis } = rawSynthesis as AggregateSynthesisResult;
+    const signedProvenance = await verifyAggregateSynthesisReceipt({
+      receipt,
+      synthesis: unsignedSynthesis,
+    });
+    if (!signedProvenance) {
+      return NextResponse.json({ error: 'Aggregate synthesis receipt is invalid or expired.' }, { status: 403 });
+    }
     let providerSynthesis;
     try {
       providerSynthesis = validateAggregateSynthesisPayload(rawSynthesis);
@@ -96,8 +112,10 @@ export async function POST(
       studyRevision: parentStudy.revision,
       interviewIds,
       interviewCount: interviewIds.length,
-      aiProvider: parentStudy.config.aiProvider ?? 'gemini',
-      aiModel: parentStudy.config.aiModel ?? 'default',
+      aiProvider: signedProvenance.aiProvider,
+      requestedAiModel: signedProvenance.requestedAiModel,
+      aiModel: signedProvenance.aiModel,
+      routedProvider: signedProvenance.routedProvider,
       generatedAt: typeof metadata.generatedAt === 'number' && Number.isSafeInteger(metadata.generatedAt)
         ? metadata.generatedAt
         : Date.now(),
@@ -111,24 +129,34 @@ export async function POST(
     );
     if (platformLimited) return platformLimited;
 
-    // Get the configured AI provider with researcher's API keys
-    const provider = getInterviewProvider(parentStudy.config, {
-      geminiApiKey: context.geminiApiKey,
-      anthropicApiKey: context.anthropicApiKey,
-    });
+    // Get the configured AI provider with researcher's API keys.
+    let provider;
+    try {
+      provider = getInterviewProvider(parentStudy.config, providerKeysFromContext(context));
+    } catch {
+      return NextResponse.json(
+        { error: 'AI provider is not configured on the server.' },
+        { status: 502 }
+      );
+    }
 
     // Generate follow-up study suggestions
-    const suggestions = await provider.generateFollowupStudy(
-      parentStudy.config,
-      synthesis
-    );
+    let suggestions;
+    try {
+      suggestions = await provider.generateFollowupStudy(
+        parentStudy.config,
+        synthesis
+      );
+    } catch (providerError) {
+      return providerErrorResponse(providerError);
+    }
 
     // Build pre-filled config for follow-up study
     const followUpConfig: Partial<StudyConfig> = {
-      name: suggestions.name,
+      name: suggestions.value.name,
       description: `Follow-up study based on "${parentStudy.config.name}"`,
-      researchQuestion: suggestions.researchQuestion,
-      coreQuestions: suggestions.coreQuestions,
+      researchQuestion: suggestions.value.researchQuestion,
+      coreQuestions: suggestions.value.coreQuestions,
       topicAreas: synthesis.commonThemes?.length > 0
         ? synthesis.commonThemes.slice(0, 5).map(t => t.theme)
         : parentStudy.config.topicAreas,
@@ -145,6 +173,7 @@ export async function POST(
 
     return NextResponse.json({
       followUpConfig,
+      generation: suggestions.execution,
       parentStudy: {
         id: parentStudy.id,
         name: parentStudy.config.name

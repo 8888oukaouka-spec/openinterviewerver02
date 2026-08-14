@@ -26,6 +26,7 @@ import {
   readStudyMutationBody,
   validateStudyConfigUpdate,
 } from '@/lib/studyConfigValidation';
+import { missingProviderCredential } from '@/lib/providerAvailability';
 
 // GET /api/studies/[id] - Get single study
 export async function GET(
@@ -137,6 +138,19 @@ export async function PUT(
       return NextResponse.json({ error: validatedConfig.error }, { status: 400 });
     }
     const updatedConfig = validatedConfig.config;
+    let missingProvider;
+    try {
+      missingProvider = missingProviderCredential(context, updatedConfig);
+    } catch {
+      return NextResponse.json({ error: 'The selected AI provider is invalid.' }, { status: 400 });
+    }
+    if (missingProvider) {
+      return NextResponse.json({
+        error: 'Connect a key for the selected AI provider before updating this study.',
+        code: 'PROVIDER_NOT_CONFIGURED',
+        provider: missingProvider,
+      }, { status: 409 });
+    }
 
     // Soft lock: warn if study has interviews, allow if user confirms.
     if (study.interviewCount > 0 && !confirmed) {

@@ -13,7 +13,7 @@ import { Loader2 } from 'lucide-react';
 export default function ParticipantPage() {
   const params = useParams();
   const router = useRouter();
-  const token = params.token as string;
+  const linkCode = params.token as string;
 
   const {
     currentStep,
@@ -24,18 +24,17 @@ export default function ParticipantPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Verify token and load study config on mount
+  // Resolve the opaque link code and establish a cookie-backed participant session.
   useEffect(() => {
-    const loadStudyFromToken = async () => {
-      if (!token) {
-        setError('No token provided');
+    const loadStudyFromLink = async () => {
+      if (!linkCode) {
+        setError('No participant link code provided');
         setLoading(false);
         return;
       }
 
       try {
-        // Verify and decode the token
-        const response = await fetch(`/api/generate-link?token=${encodeURIComponent(token)}`);
+        const response = await fetch(`/api/generate-link?token=${encodeURIComponent(linkCode)}`);
         const result = await response.json();
 
         if (!result.valid || !result.data) {
@@ -44,24 +43,24 @@ export default function ParticipantPage() {
           return;
         }
 
-        const tokenData = result.data as { studyConfig: StudyConfig; sessionHandle?: string };
-        if (!tokenData.sessionHandle) {
+        const resolvedLink = result.data as { studyConfig: StudyConfig; sessionHandle?: string };
+        if (!resolvedLink.sessionHandle) {
           setError('The participant session could not be established');
           setLoading(false);
           return;
         }
-        beginParticipantSession(tokenData.studyConfig, null, tokenData.sessionHandle);
+        beginParticipantSession(resolvedLink.studyConfig, resolvedLink.sessionHandle);
         setLoading(false);
         router.replace('/consent');
       } catch (err) {
-        console.error('Error loading study from token:', err);
+        console.error('Error loading study from participant link:', err);
         setError('Failed to load study configuration');
         setLoading(false);
       }
     };
 
-    loadStudyFromToken();
-  }, [token, beginParticipantSession, router]);
+    loadStudyFromLink();
+  }, [linkCode, beginParticipantSession, router]);
 
   // Loading state
   if (loading) {

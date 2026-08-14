@@ -49,11 +49,11 @@ describe('validateInterviewResponse', () => {
     expect(validateInterviewResponse(validInterviewResponse)).toEqual(validInterviewResponse);
   });
 
-  it('normalizes optional null-able fields to null and missing profile update values to null', () => {
+  it('normalizes null-able fields and profile update values to null', () => {
     const input = clone(validInterviewResponse);
-    delete input.questionAddressed;
-    delete input.phaseTransition;
-    input.profileUpdates[0] = { fieldId: 'role', status: 'vague' };
+    input.questionAddressed = null;
+    input.phaseTransition = null;
+    input.profileUpdates[0] = { fieldId: 'role', value: null, status: 'vague' };
     expect(validateInterviewResponse(input)).toEqual({
       message: 'Tell me about your current role.',
       questionAddressed: null,
@@ -61,6 +61,21 @@ describe('validateInterviewResponse', () => {
       profileUpdates: [{ fieldId: 'role', value: null, status: 'vague' }],
       shouldConclude: false,
     });
+  });
+
+  it('rejects profile update entries without an explicit value', () => {
+    const input = clone(validInterviewResponse);
+    input.profileUpdates[0] = { fieldId: 'role', status: 'vague' };
+    expect(() => validateInterviewResponse(input)).toThrow(/profileUpdates\[0\].value/);
+  });
+
+  it('requires questionAddressed and phaseTransition to be present', () => {
+    const input = clone(validInterviewResponse);
+    delete input.questionAddressed;
+    expect(() => validateInterviewResponse(input)).toThrow(/questionAddressed/);
+    const withPhase = clone(validInterviewResponse);
+    delete withPhase.phaseTransition;
+    expect(() => validateInterviewResponse(withPhase)).toThrow(/phaseTransition/);
   });
 
   it('rejects non-object roots', () => {
@@ -207,17 +222,13 @@ describe('validateAggregateSynthesisPayload', () => {
     expect(validateAggregateSynthesisPayload(validAggregatePayload)).toEqual(validAggregatePayload);
   });
 
-  it('defaults absent optional arrays to empty arrays', () => {
+  it('requires divergentViews and researchImplications to be present', () => {
     const input = clone(validAggregatePayload);
     delete input.divergentViews;
-    delete input.researchImplications;
-    expect(validateAggregateSynthesisPayload(input)).toEqual({
-      commonThemes: validAggregatePayload.commonThemes,
-      divergentViews: [],
-      keyFindings: validAggregatePayload.keyFindings,
-      researchImplications: [],
-      bottomLine: validAggregatePayload.bottomLine,
-    });
+    expect(() => validateAggregateSynthesisPayload(input)).toThrow(/divergentViews/);
+    const withoutImplications = clone(validAggregatePayload);
+    delete withoutImplications.researchImplications;
+    expect(() => validateAggregateSynthesisPayload(withoutImplications)).toThrow(/researchImplications/);
   });
 
   it('rejects malformed commonThemes including nested representativeQuotes', () => {

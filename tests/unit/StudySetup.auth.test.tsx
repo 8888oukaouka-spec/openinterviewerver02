@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { makeStudyConfig } from '../fixtures/models';
+import { DEFAULT_MODEL_BY_PROVIDER } from '@/lib/providerRegistry';
 
 /**
  * StudySetup auth contract: a 200 response with body {authenticated:false}
@@ -37,6 +38,14 @@ const fetchMock = vi.hoisted(() => ({
     mode: 'hosted' as 'hosted' | 'standalone',
     hasAnthropicKey: true,
     hasGeminiKey: true,
+    hasOpenAiKey: true,
+    hasOpenRouterKey: true,
+  } as {
+    mode: 'hosted' | 'standalone';
+    hasAnthropicKey: boolean;
+    hasGeminiKey: boolean;
+    hasOpenAiKey?: boolean;
+    hasOpenRouterKey?: boolean;
   },
   configStatusCode: 200,
 }));
@@ -49,6 +58,8 @@ beforeEach(() => {
     mode: 'hosted',
     hasAnthropicKey: true,
     hasGeminiKey: true,
+    hasOpenAiKey: true,
+    hasOpenRouterKey: true,
   };
   fetchMock.configStatusCode = 200;
   routerMock.push.mockReset();
@@ -80,7 +91,6 @@ beforeEach(() => {
     setStep: vi.fn(),
     loadExampleStudy: vi.fn(),
     setViewMode: vi.fn(),
-    setParticipantToken: vi.fn(),
     resetParticipant: vi.fn(),
   });
 });
@@ -151,6 +161,8 @@ describe('StudySetup auth gate (JSON body, not HTTP status)', () => {
       mode: 'standalone',
       hasAnthropicKey: false,
       hasGeminiKey: true,
+      hasOpenAiKey: false,
+      hasOpenRouterKey: false,
     };
 
     render(<StudySetup />);
@@ -165,6 +177,10 @@ describe('StudySetup auth gate (JSON body, not HTTP status)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open self-host setup guide' }));
     expect(routerMock.push).toHaveBeenCalledWith('/self-host');
     expect(document.body.textContent).not.toMatch(/Vercel dashboard|github\.com\/your-repo/i);
+
+    fireEvent.click(screen.getByRole('radio', { name: /OpenRouter/ }));
+    expect(await screen.findByText('OpenRouter is not available')).toBeInTheDocument();
+    expect(screen.getByText('OPENROUTER_API_KEY')).toBeInTheDocument();
   });
 
   it('fails closed when provider availability cannot be verified', async () => {
@@ -176,6 +192,68 @@ describe('StudySetup auth gate (JSON body, not HTTP status)', () => {
 
     expect(await screen.findByText('Provider availability could not be verified')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save Study' })).toBeDisabled();
+  });
+
+  it('shows all four configured providers and resets the model on provider changes', async () => {
+    fetchMock.authenticated = true;
+
+    render(<StudySetup />);
+    fillRequiredFields();
+
+    expect(await screen.findByRole('radio', { name: /Google Gemini/ })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /Anthropic Claude/ })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /^OpenAI/ })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /OpenRouter/ })).toBeInTheDocument();
+    expect(screen.getByLabelText('AI Reasoning Mode')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('radio', { name: /^OpenAI/ }));
+    expect(screen.getByLabelText('Model')).toHaveValue(DEFAULT_MODEL_BY_PROVIDER.openai);
+    expect(screen.queryByLabelText('AI Reasoning Mode')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('radio', { name: /OpenRouter/ }));
+    expect(screen.getByLabelText('Model')).toHaveValue(DEFAULT_MODEL_BY_PROVIDER.openrouter);
+    expect(screen.getByText(/ZDR-compatible upstream inference provider/i)).toBeInTheDocument();
+  });
+
+  it('hides unconfigured provider choices for hosted accounts while retaining legacy status compatibility', async () => {
+    fetchMock.authenticated = true;
+    fetchMock.configStatus = {
+      mode: 'hosted',
+      hasAnthropicKey: true,
+      hasGeminiKey: false,
+    };
+
+    render(<StudySetup />);
+
+    expect(await screen.findByRole('radio', { name: /Anthropic Claude/ })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByRole('radio', { name: /Google Gemini/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('radio', { name: /^OpenAI/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('radio', { name: /OpenRouter/ })).not.toBeInTheDocument();
+    });
+  });
+
+  it('fails closed on invalid custom OpenRouter IDs and accepts a bounded provider/model slug', async () => {
+    fetchMock.authenticated = true;
+
+    render(<StudySetup />);
+    fillRequiredFields();
+    await waitFor(() => expect(screen.queryByText(/Checking configured AI providers/i)).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole('radio', { name: /OpenRouter/ }));
+    fireEvent.change(screen.getByLabelText('Model'), { target: { value: '__custom__' } });
+
+    const customModel = screen.getByLabelText('OpenRouter model ID');
+    expect(customModel).toHaveAttribute('maxLength', '200');
+    expect(screen.getByRole('alert')).toHaveTextContent(/valid OpenRouter provider\/model slug/i);
+    expect(screen.getByRole('button', { name: 'Save Study' })).toBeDisabled();
+
+    fireEvent.change(customModel, { target: { value: 'openrouter/auto' } });
+    expect(screen.getByRole('alert')).toHaveTextContent(/Automatic routing is not supported/i);
+    expect(screen.getByRole('button', { name: 'Save Study' })).toBeDisabled();
+
+    fireEvent.change(customModel, { target: { value: 'x-ai/grok-4.6' } });
+    expect(screen.queryByText(/Enter a valid OpenRouter provider\/model slug/i)).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save Study' })).toBeEnabled());
   });
 
   it('names icon-only field, question, and topic removal controls', () => {

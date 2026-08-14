@@ -114,6 +114,49 @@ describe('hosted config validator', () => {
       .toBe(false);
   });
 
+  it.each([
+    ['openai', 'OPENAI_API_KEY'],
+    ['openrouter', 'OPENROUTER_API_KEY'],
+  ] as const)('accepts standalone %s only with its matching key', (provider, keyName) => {
+    const env: NodeJS.ProcessEnv = {
+      NODE_ENV: 'production',
+      DEPLOYMENT_MODE: 'standalone',
+      APP_BASE_URL: 'https://standalone.example',
+      ADMIN_PASSWORD: 'standalone-admin-password',
+      SESSION_SECRET: SECRET_A,
+      PARTICIPANT_TOKEN_SECRET: SECRET_B,
+      RATE_LIMIT_SALT: SECRET_C,
+      KV_REST_API_URL: 'https://standalone.upstash.io',
+      KV_REST_API_TOKEN: 'redis-token',
+      AI_PROVIDER: provider,
+      [keyName]: 'provider-key',
+    };
+
+    expect(validateStandaloneConfig(env)).toEqual([]);
+    delete env[keyName];
+    expect(validateStandaloneConfig(env)).toEqual(expect.arrayContaining([
+      'missing_ai_provider_key',
+      'invalid_ai_provider',
+    ]));
+  });
+
+  it('requires the implicit Gemini default key when AI_PROVIDER is omitted', () => {
+    const env: NodeJS.ProcessEnv = {
+      NODE_ENV: 'production',
+      DEPLOYMENT_MODE: 'standalone',
+      APP_BASE_URL: 'https://standalone.example',
+      ADMIN_PASSWORD: 'standalone-admin-password',
+      SESSION_SECRET: SECRET_A,
+      PARTICIPANT_TOKEN_SECRET: SECRET_B,
+      RATE_LIMIT_SALT: SECRET_C,
+      KV_REST_API_URL: 'https://standalone.upstash.io',
+      KV_REST_API_TOKEN: 'redis-token',
+      OPENAI_API_KEY: 'openai-key',
+    };
+
+    expect(validateStandaloneConfig(env)).toContain('invalid_ai_provider');
+  });
+
   it('fails closed on production mode misconfiguration without leaking the typo', () => {
     const view = getPublicConfig({
       NODE_ENV: 'production',

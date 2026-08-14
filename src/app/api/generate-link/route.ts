@@ -21,6 +21,8 @@ import { isHostedMode } from '@/lib/mode';
 import { consumePlatformRateLimit, getStudyOwnerChecked } from '@/lib/platformDb';
 import { createParticipantLinkRecord, getParticipantLinkByCode } from '@/lib/participantLinks';
 import { getAppBaseUrl } from '@/lib/appBaseUrl';
+import { missingProviderCredential } from '@/lib/providerAvailability';
+import { validateStudyConfig } from '@/lib/studyConfigValidation';
 
 const STUDY_ID_PATTERN = /^[a-zA-Z0-9-]+$/;
 
@@ -79,12 +81,33 @@ export async function POST(request: Request) {
       );
     }
 
-    const savedConfig = loaded.study.config;
+    const validatedStudy = validateStudyConfig(loaded.study.config);
+    if (!validatedStudy.ok) {
+      return NextResponse.json({
+        error: 'Review and save this study with an explicit AI provider and model before creating participant links.',
+        code: 'STUDY_REQUIRES_RESAVE',
+      }, { status: 409 });
+    }
+    const savedConfig = validatedStudy.config;
     if (savedConfig.linksEnabled === false) {
       return NextResponse.json(
         { error: 'Participant links are disabled for this study.' },
         { status: 409 }
       );
+    }
+
+    let missingProvider;
+    try {
+      missingProvider = missingProviderCredential(context, savedConfig);
+    } catch {
+      return NextResponse.json({ error: 'The selected AI provider is invalid.' }, { status: 400 });
+    }
+    if (missingProvider) {
+      return NextResponse.json({
+        error: 'Connect a key for the selected AI provider before creating a participant link.',
+        code: 'PROVIDER_NOT_CONFIGURED',
+        provider: missingProvider,
+      }, { status: 409 });
     }
 
     if (isHostedMode()) {
@@ -147,8 +170,9 @@ export async function POST(request: Request) {
   }
 }
 
-// GET /api/generate-link?token=xxx - Verify and decode a token
-// Used by participant page to validate token before starting interview
+// GET /api/generate-link?token=xxx - Exchange an opaque share code for the
+// participant's short-lived HttpOnly session. The historical query name is
+// retained for link compatibility; the value is not a JWT or browser bearer.
 // Strips sensitive fields (researcherId) from response
 export async function GET(request: Request) {
   try {

@@ -72,6 +72,7 @@ describe('classifyProviderError', () => {
   it.each([
     [400, 'config'],
     [401, 'config'],
+    [402, 'config'],
     [403, 'config'],
     [404, 'config'],
     [422, 'config'],

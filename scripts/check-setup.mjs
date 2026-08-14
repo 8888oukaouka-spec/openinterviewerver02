@@ -6,6 +6,12 @@ import { fileURLToPath } from 'node:url';
 
 const MIN_NODE = [24, 15, 0];
 const MODES = new Set(['demo', 'standalone', 'hosted']);
+const AI_PROVIDERS = {
+  gemini: { key: 'GEMINI_API_KEY', label: 'Gemini' },
+  claude: { key: 'ANTHROPIC_API_KEY', label: 'Claude' },
+  openai: { key: 'OPENAI_API_KEY', label: 'OpenAI' },
+  openrouter: { key: 'OPENROUTER_API_KEY', label: 'OpenRouter' },
+};
 const SECRET_PLACEHOLDERS = /^(?:change[-_ ]?me|replace[-_ ]?me|your[-_ ]|example|todo|secret$)/i;
 
 function check(status, code, message) {
@@ -274,20 +280,32 @@ export function validateSetup({
     addRequiredEnv(checks, env, 'KV_REST_API_TOKEN');
     validateUrl(checks, env, 'KV_REST_API_URL', { upstash: true, production });
 
-    const hasGemini = isPresent(env, 'GEMINI_API_KEY');
-    const hasAnthropic = isPresent(env, 'ANTHROPIC_API_KEY');
-    if (!hasGemini && !hasAnthropic) {
-      checks.push(check('error', 'env.aiProvider.missing', 'Configure at least one of GEMINI_API_KEY or ANTHROPIC_API_KEY.'));
+    const configuredProviders = Object.entries(AI_PROVIDERS)
+      .filter(([, provider]) => isPresent(env, provider.key));
+    if (configuredProviders.length === 0) {
+      checks.push(check(
+        'error',
+        'env.aiProvider.missing',
+        'Configure at least one of GEMINI_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY.',
+      ));
     } else {
       checks.push(check('pass', 'env.aiProvider.present', 'At least one AI provider key is configured.'));
     }
 
-    if (env.AI_PROVIDER === 'gemini' && !hasGemini) {
-      checks.push(check('error', 'env.AI_PROVIDER.gemini', 'AI_PROVIDER selects Gemini but GEMINI_API_KEY is missing.'));
-    } else if (env.AI_PROVIDER === 'claude' && !hasAnthropic) {
-      checks.push(check('error', 'env.AI_PROVIDER.claude', 'AI_PROVIDER selects Claude but ANTHROPIC_API_KEY is missing.'));
-    } else if (isPresent(env, 'AI_PROVIDER') && !['gemini', 'claude'].includes(env.AI_PROVIDER)) {
-      checks.push(check('error', 'env.AI_PROVIDER.invalid', 'AI_PROVIDER must be gemini or claude.'));
+    const selectedProvider = isPresent(env, 'AI_PROVIDER') ? env.AI_PROVIDER.trim() : 'gemini';
+    const providerConfig = AI_PROVIDERS[selectedProvider];
+    if (!providerConfig) {
+      checks.push(check(
+        'error',
+        'env.AI_PROVIDER.invalid',
+        'AI_PROVIDER must be gemini, claude, openai, or openrouter.',
+      ));
+    } else if (!isPresent(env, providerConfig.key)) {
+      checks.push(check(
+        'error',
+        `env.AI_PROVIDER.${selectedProvider}`,
+        `AI_PROVIDER selects ${providerConfig.label} but ${providerConfig.key} is missing.`,
+      ));
     }
 
     validateIndependentSecrets(checks, env, [
@@ -330,9 +348,17 @@ export function validateSetup({
       'RATE_LIMIT_SALT',
     ]);
 
-    for (const name of ['ADMIN_PASSWORD', 'GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'KV_REST_API_URL', 'KV_REST_API_TOKEN']) {
+    for (const name of [
+      'ADMIN_PASSWORD',
+      ...Object.values(AI_PROVIDERS).map((provider) => provider.key),
+      'KV_REST_API_URL',
+      'KV_REST_API_TOKEN',
+    ]) {
       if (isPresent(env, name)) {
-        checks.push(check('warn', `env.${name}.hosted`, `${name} is not part of the hosted researcher BYOS path.`));
+        const message = Object.values(AI_PROVIDERS).some((provider) => provider.key === name)
+          ? `${name} is ignored in hosted mode; researchers configure provider keys in the application UI.`
+          : `${name} is not part of the hosted researcher BYOS path.`;
+        checks.push(check('warn', `env.${name}.hosted`, message));
       }
     }
   }

@@ -34,7 +34,13 @@ beforeEach(() => {
   vi.clearAllMocks();
   contextMock.getRequestContext.mockResolvedValue({
     authorized: true,
-    context: { kvClient: {} },
+    context: {
+      kvClient: {},
+      geminiApiKey: 'gemini-key',
+      anthropicApiKey: null,
+      openaiApiKey: null,
+      openrouterApiKey: null,
+    },
     researcherId: 'researcher-a',
   });
   kvMock.isKVAvailable.mockResolvedValue(true);

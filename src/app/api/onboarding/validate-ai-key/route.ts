@@ -42,7 +42,15 @@ export async function POST(request: Request) {
     const provider = parsedBody.value.provider;
     const apiKey = normalizeCredential(parsedBody.value.apiKey);
 
-    if ((provider !== 'gemini' && provider !== 'claude') || !apiKey) {
+    if (
+      (
+        provider !== 'gemini'
+        && provider !== 'claude'
+        && provider !== 'openai'
+        && provider !== 'openrouter'
+      )
+      || !apiKey
+    ) {
       return NextResponse.json({ error: 'Missing provider or apiKey' }, { status: 400 });
     }
 

@@ -21,6 +21,12 @@ import { evictResearcherClients } from '@/lib/kvClient';
 import { readBoundedJsonObject } from '@/lib/requestBody';
 
 const hasOwn = (value: object, field: string) => Object.prototype.hasOwnProperty.call(value, field);
+const providerLabel = {
+  gemini: 'Gemini',
+  claude: 'Claude',
+  openai: 'OpenAI',
+  openrouter: 'OpenRouter',
+} as const;
 
 export async function POST(request: Request) {
   if (!isHostedMode()) {
@@ -51,7 +57,8 @@ export async function POST(request: Request) {
   }
 
   try {
-    const parsedBody = await readBoundedJsonObject(request, 20_000);
+    // Six independently bounded credentials can be rotated in one request.
+    const parsedBody = await readBoundedJsonObject(request, 30_000);
     if (!parsedBody.ok) {
       return NextResponse.json(
         { error: parsedBody.status === 413 ? 'Request body is too large' : 'Invalid request body' },
@@ -63,11 +70,13 @@ export async function POST(request: Request) {
     const hasRedisToken = hasOwn(body, 'redisToken');
     const hasGemini = hasOwn(body, 'geminiApiKey');
     const hasAnthropic = hasOwn(body, 'anthropicApiKey');
+    const hasOpenAi = hasOwn(body, 'openAiApiKey');
+    const hasOpenRouter = hasOwn(body, 'openRouterApiKey');
 
     if (hasRedisUrl !== hasRedisToken) {
       return NextResponse.json({ error: 'Redis URL and token must be updated together' }, { status: 400 });
     }
-    if (!hasRedisUrl && !hasGemini && !hasAnthropic) {
+    if (!hasRedisUrl && !hasGemini && !hasAnthropic && !hasOpenAi && !hasOpenRouter) {
       return NextResponse.json({ error: 'No credentials provided' }, { status: 400 });
     }
 
@@ -92,17 +101,35 @@ export async function POST(request: Request) {
     const anthropicApiKey = typeof body.anthropicApiKey === 'string'
       ? normalizeCredential(body.anthropicApiKey)
       : null;
+    const openAiApiKey = typeof body.openAiApiKey === 'string'
+      ? normalizeCredential(body.openAiApiKey)
+      : null;
+    const openRouterApiKey = typeof body.openRouterApiKey === 'string'
+      ? normalizeCredential(body.openRouterApiKey)
+      : null;
     if (hasGemini && body.geminiApiKey !== null && !geminiApiKey) {
       return NextResponse.json({ error: 'Gemini API key is invalid' }, { status: 400 });
     }
     if (hasAnthropic && body.anthropicApiKey !== null && !anthropicApiKey) {
       return NextResponse.json({ error: 'Claude API key is invalid' }, { status: 400 });
     }
+    if (hasOpenAi && body.openAiApiKey !== null && !openAiApiKey) {
+      return NextResponse.json({ error: 'OpenAI API key is invalid' }, { status: 400 });
+    }
+    if (hasOpenRouter && body.openRouterApiKey !== null && !openRouterApiKey) {
+      return NextResponse.json({ error: 'OpenRouter API key is invalid' }, { status: 400 });
+    }
     if (hasGemini && body.geminiApiKey !== null && typeof body.geminiApiKey !== 'string') {
       return NextResponse.json({ error: 'Gemini API key must be a string or null' }, { status: 400 });
     }
     if (hasAnthropic && body.anthropicApiKey !== null && typeof body.anthropicApiKey !== 'string') {
       return NextResponse.json({ error: 'Claude API key must be a string or null' }, { status: 400 });
+    }
+    if (hasOpenAi && body.openAiApiKey !== null && typeof body.openAiApiKey !== 'string') {
+      return NextResponse.json({ error: 'OpenAI API key must be a string or null' }, { status: 400 });
+    }
+    if (hasOpenRouter && body.openRouterApiKey !== null && typeof body.openRouterApiKey !== 'string') {
+      return NextResponse.json({ error: 'OpenRouter API key must be a string or null' }, { status: 400 });
     }
 
     if (redisUrl && redisToken) {
@@ -115,18 +142,27 @@ export async function POST(request: Request) {
       }
     }
 
-    for (const [provider, apiKey] of [
+    const aiCredentials = [
       ['gemini', geminiApiKey],
       ['claude', anthropicApiKey],
-    ] as const) {
-      if (!apiKey) continue;
-      const validation = await validateAiCredential(provider, apiKey);
-      if (!validation.valid) {
-        return NextResponse.json(
-          { error: validation.reason === 'invalid' ? `${provider === 'gemini' ? 'Gemini' : 'Claude'} API key is invalid` : `Could not verify the ${provider === 'gemini' ? 'Gemini' : 'Claude'} API key` },
-          { status: validation.reason === 'invalid' ? 400 : 503 }
-        );
-      }
+      ['openai', openAiApiKey],
+      ['openrouter', openRouterApiKey],
+    ] as const;
+    const aiValidations = await Promise.all(aiCredentials.map(async ([provider, apiKey]) => ({
+      provider,
+      validation: apiKey ? await validateAiCredential(provider, apiKey) : null,
+    })));
+    const failedAiValidation = aiValidations.find(result => result.validation?.valid === false);
+    if (failedAiValidation?.validation?.valid === false) {
+      const { provider, validation } = failedAiValidation;
+      return NextResponse.json(
+        {
+          error: validation.reason === 'invalid'
+            ? `${providerLabel[provider]} API key is invalid`
+            : `Could not verify the ${providerLabel[provider]} API key`,
+        },
+        { status: validation.reason === 'invalid' ? 400 : 503 }
+      );
     }
 
     const updates: Parameters<typeof updateResearcherCredentialsAtomic>[2] = {};
@@ -145,12 +181,24 @@ export async function POST(request: Request) {
         ? encrypt(anthropicApiKey, { researcherId, purpose: 'anthropic-api-key' })
         : null;
     }
+    if (hasOpenAi) {
+      updates.encryptedOpenAiApiKey = openAiApiKey
+        ? encrypt(openAiApiKey, { researcherId, purpose: 'openai-api-key' })
+        : null;
+    }
+    if (hasOpenRouter) {
+      updates.encryptedOpenRouterApiKey = openRouterApiKey
+        ? encrypt(openRouterApiKey, { researcherId, purpose: 'openrouter-api-key' })
+        : null;
+    }
 
     const resultingHasRedis = hasRedisUrl
       ? true
       : !!(researcher.encryptedRedisUrl && researcher.encryptedRedisToken);
     const resultingHasAi = (hasGemini ? !!geminiApiKey : !!researcher.encryptedGeminiApiKey)
-      || (hasAnthropic ? !!anthropicApiKey : !!researcher.encryptedAnthropicApiKey);
+      || (hasAnthropic ? !!anthropicApiKey : !!researcher.encryptedAnthropicApiKey)
+      || (hasOpenAi ? !!openAiApiKey : !!researcher.encryptedOpenAiApiKey)
+      || (hasOpenRouter ? !!openRouterApiKey : !!researcher.encryptedOpenRouterApiKey);
     if (!resultingHasRedis || !resultingHasAi) updates.onboardingComplete = false;
 
     const result = await updateResearcherCredentialsAtomic(
@@ -188,6 +236,8 @@ export async function POST(request: Request) {
         redis: resultingHasRedis,
         gemini: hasGemini ? !!geminiApiKey : !!researcher.encryptedGeminiApiKey,
         anthropic: hasAnthropic ? !!anthropicApiKey : !!researcher.encryptedAnthropicApiKey,
+        openai: hasOpenAi ? !!openAiApiKey : !!researcher.encryptedOpenAiApiKey,
+        openrouter: hasOpenRouter ? !!openRouterApiKey : !!researcher.encryptedOpenRouterApiKey,
       },
     });
   } catch (error) {

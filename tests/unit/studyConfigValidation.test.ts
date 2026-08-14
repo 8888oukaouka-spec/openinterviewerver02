@@ -55,6 +55,18 @@ describe('validateStudyConfig', () => {
   });
 
   it('enforces provider/model compatibility and enums', () => {
+    const missingProvider = makeStudyConfig();
+    delete missingProvider.aiProvider;
+    expect(validateStudyConfig(missingProvider)).toMatchObject({
+      ok: false,
+      error: 'AI model is not compatible with the selected provider',
+    });
+    const missingModel = makeStudyConfig();
+    delete missingModel.aiModel;
+    expect(validateStudyConfig(missingModel)).toMatchObject({
+      ok: false,
+      error: 'AI model is not compatible with the selected provider',
+    });
     expect(validateStudyConfig(makeStudyConfig({
       aiProvider: 'claude',
       aiModel: 'gemini-2.5-flash',
@@ -74,6 +86,27 @@ describe('validateStudyConfig', () => {
       ...makeStudyConfig(),
       aiBehavior: 'unbounded',
     })).toMatchObject({ ok: false, error: 'Invalid AI behavior' });
+  });
+
+  it('accepts bounded custom OpenRouter slugs but never automatic routing', () => {
+    const custom = makeStudyConfig({
+      aiProvider: 'openrouter',
+      aiModel: 'qwen/qwen3.6-plus',
+      enableReasoning: true,
+    });
+    expect(validateStudyConfig(custom)).toEqual({ ok: true, config: custom });
+
+    expect(validateStudyConfig(makeStudyConfig({
+      aiProvider: 'openrouter',
+      aiModel: 'openrouter/auto',
+    }))).toMatchObject({
+      ok: false,
+      error: 'AI model is not compatible with the selected provider',
+    });
+    expect(validateStudyConfig(makeStudyConfig({
+      aiProvider: 'openrouter',
+      aiModel: '../not-a-provider/model',
+    }))).toMatchObject({ ok: false });
   });
 
   it('requires bounded server IDs and timestamps', () => {

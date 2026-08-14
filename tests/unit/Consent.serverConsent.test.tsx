@@ -17,7 +17,6 @@ beforeEach(() => {
   navigation.push.mockReset();
   useStore.getState().beginParticipantSession(
     makeStudyConfig({ id: 'study-a' }),
-    null,
     'participant-handle-a-123456'
   );
 });
@@ -27,6 +26,30 @@ afterEach(() => {
 });
 
 describe('Consent server recording', () => {
+  it('names the selected direct provider without exposing credential details', () => {
+    render(<Consent />);
+
+    expect(screen.getByText(/Your responses are sent to Google Gemini\./)).toBeInTheDocument();
+    expect(screen.getByText(/researcher is the study's data controller/i)).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/API key|GEMINI_API_KEY|AIza/i);
+  });
+
+  it('discloses OpenRouter and its privacy-compatible upstream routing', () => {
+    useStore.getState().beginParticipantSession(
+      makeStudyConfig({
+        id: 'study-openrouter',
+        aiProvider: 'openrouter',
+        aiModel: 'openai/gpt-5.6-terra',
+      }),
+      'participant-handle-openrouter-123456'
+    );
+
+    render(<Consent />);
+
+    expect(screen.getByText(/sent to OpenRouter and a ZDR-compatible upstream inference provider/i)).toBeInTheDocument();
+    expect(screen.getByText(/retention, access, and deletion details/i)).toBeInTheDocument();
+  });
+
   it('submits the tab session selector and uses the server-issued timestamp', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       success: true,

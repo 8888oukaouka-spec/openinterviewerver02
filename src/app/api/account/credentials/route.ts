@@ -14,10 +14,15 @@ import { decrypt } from '@/lib/crypto';
 import { evictResearcherClients } from '@/lib/kvClient';
 import { readBoundedJsonObject } from '@/lib/requestBody';
 
-type CredentialTarget = 'gemini' | 'anthropic' | 'redis' | 'all';
+type CredentialTarget = 'gemini' | 'anthropic' | 'openai' | 'openrouter' | 'redis' | 'all';
 
 function isTarget(value: unknown): value is CredentialTarget {
-  return value === 'gemini' || value === 'anthropic' || value === 'redis' || value === 'all';
+  return value === 'gemini'
+    || value === 'anthropic'
+    || value === 'openai'
+    || value === 'openrouter'
+    || value === 'redis'
+    || value === 'all';
 }
 
 export async function DELETE(request: Request) {
@@ -69,6 +74,8 @@ export async function DELETE(request: Request) {
   const updates: Parameters<typeof updateResearcherCredentialsAtomic>[2] = {};
   if (target === 'gemini' || target === 'all') updates.encryptedGeminiApiKey = null;
   if (target === 'anthropic' || target === 'all') updates.encryptedAnthropicApiKey = null;
+  if (target === 'openai' || target === 'all') updates.encryptedOpenAiApiKey = null;
+  if (target === 'openrouter' || target === 'all') updates.encryptedOpenRouterApiKey = null;
   if (target === 'redis' || target === 'all') {
     updates.encryptedRedisUrl = null;
     updates.encryptedRedisToken = null;
@@ -82,7 +89,11 @@ export async function DELETE(request: Request) {
     && !!researcher.encryptedGeminiApiKey;
   const hasAnthropicAfter = target !== 'anthropic' && target !== 'all'
     && !!researcher.encryptedAnthropicApiKey;
-  if (!hasRedisAfter || (!hasGeminiAfter && !hasAnthropicAfter)) {
+  const hasOpenAiAfter = target !== 'openai' && target !== 'all'
+    && !!researcher.encryptedOpenAiApiKey;
+  const hasOpenRouterAfter = target !== 'openrouter' && target !== 'all'
+    && !!researcher.encryptedOpenRouterApiKey;
+  if (!hasRedisAfter || (!hasGeminiAfter && !hasAnthropicAfter && !hasOpenAiAfter && !hasOpenRouterAfter)) {
     updates.onboardingComplete = false;
   }
 
@@ -116,6 +127,8 @@ export async function DELETE(request: Request) {
       redis: hasRedisAfter,
       gemini: hasGeminiAfter,
       anthropic: hasAnthropicAfter,
+      openai: hasOpenAiAfter,
+      openrouter: hasOpenRouterAfter,
     },
   });
 }

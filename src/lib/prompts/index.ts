@@ -21,8 +21,7 @@ export {
 
 // Greeting generation
 export {
-  buildGreetingPrompt,
-  getDefaultGreeting
+  buildGreetingPrompt
 } from './greeting';
 
 // Interview synthesis/analysis

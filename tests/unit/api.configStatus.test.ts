@@ -35,6 +35,8 @@ describe('GET /api/config/status', () => {
     platformMock.toResearcherProfile.mockReturnValue({
       hasAnthropicKey: true,
       hasGeminiKey: false,
+      hasOpenAiKey: true,
+      hasOpenRouterKey: false,
     });
 
     const response = await GET();
@@ -44,6 +46,8 @@ describe('GET /api/config/status', () => {
       mode: 'hosted',
       hasAnthropicKey: true,
       hasGeminiKey: false,
+      hasOpenAiKey: true,
+      hasOpenRouterKey: false,
     });
   });
 
@@ -54,6 +58,8 @@ describe('GET /api/config/status', () => {
       context: {
         anthropicApiKey: null,
         geminiApiKey: 'configured-but-never-returned',
+        openaiApiKey: null,
+        openrouterApiKey: 'configured-but-never-returned',
       },
     });
 
@@ -64,6 +70,8 @@ describe('GET /api/config/status', () => {
       mode: 'standalone',
       hasAnthropicKey: false,
       hasGeminiKey: true,
+      hasOpenAiKey: false,
+      hasOpenRouterKey: true,
     });
   });
 });

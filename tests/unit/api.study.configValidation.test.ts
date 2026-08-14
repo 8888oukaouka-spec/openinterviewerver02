@@ -36,7 +36,13 @@ beforeEach(() => {
   vi.clearAllMocks();
   contextMock.getRequestContext.mockResolvedValue({
     authorized: true,
-    context: { kvClient: {} },
+    context: {
+      kvClient: {},
+      geminiApiKey: 'gemini-key',
+      anthropicApiKey: null,
+      openaiApiKey: null,
+      openrouterApiKey: null,
+    },
     researcherId: 'researcher-a',
   });
   kvMock.isKVAvailable.mockResolvedValue(true);
@@ -44,6 +50,21 @@ beforeEach(() => {
 });
 
 describe('study route configuration validation', () => {
+  it('rejects a canonical study whose selected provider has no request-scoped key', async () => {
+    const response = await POST(request(
+      'http://localhost/api/studies',
+      'POST',
+      { config: { ...makeStudyConfig(), aiProvider: 'openrouter', aiModel: 'openai/gpt-5.6-terra' } },
+    ));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: 'PROVIDER_NOT_CONFIGURED',
+      provider: 'openrouter',
+    });
+    expect(kvMock.createStudyAtomic).not.toHaveBeenCalled();
+  });
+
   it('rejects unknown create fields before any persistence write', async () => {
     const response = await POST(request(
       'http://localhost/api/studies',

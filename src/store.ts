@@ -107,8 +107,6 @@ interface ResearchState {
   streamingMessage: string | null;
   isAiThinking: boolean;
 
-  // Participant Token (for URL-based study config)
-  participantToken: string | null;
   // Non-secret tab selector for the matching HttpOnly participant cookie.
   participantSessionHandle: string | null;
 
@@ -146,11 +144,8 @@ interface ResearchState {
   // Actions - Behavior Data
   setBehaviorData: (data: BehaviorData) => void;
 
-  // Actions - Token
-  setParticipantToken: (token: string | null) => void;
   beginParticipantSession: (
     studyConfig: StudyConfig,
-    token: string | null,
     sessionHandle?: string | null
   ) => void;
 
@@ -176,7 +171,6 @@ export const useStore = create<ResearchState>()(
       contextEntries: [],
       streamingMessage: null,
       isAiThinking: false,
-      participantToken: null,
       participantSessionHandle: null,
 
       setStep: (step) => set((state) => ({
@@ -304,11 +298,8 @@ export const useStore = create<ResearchState>()(
 
       setBehaviorData: (data) => set({ behaviorData: data }),
 
-      setParticipantToken: (token) => set({ participantToken: token }),
-
-      beginParticipantSession: (config, token, sessionHandle = null) => set({
+      beginParticipantSession: (config, sessionHandle = null) => set({
         studyConfig: config,
-        participantToken: token,
         participantSessionHandle: sessionHandle,
         viewMode: 'participant',
         currentStep: 'consent',
@@ -340,12 +331,10 @@ export const useStore = create<ResearchState>()(
         contextEntries: [],
         streamingMessage: null,
         isAiThinking: false,
-        participantToken: null,
         participantSessionHandle: null
       }),
 
       resetParticipant: () => set((state) => ({
-        participantToken: null,
         participantSessionHandle: null,
         participantProfile: null,
         consentGiven: false,
@@ -363,7 +352,15 @@ export const useStore = create<ResearchState>()(
     {
       name: 'research-tool-storage',
       storage: createJSONStorage(() => sessionStorage),
-      version: 3,
+      version: 4,
+      migrate: (persistedState) => {
+        if (!persistedState || typeof persistedState !== 'object') {
+          return persistedState as ResearchState;
+        }
+        const cleanState = { ...(persistedState as Record<string, unknown>) };
+        delete cleanState.participantToken;
+        return cleanState as unknown as ResearchState;
+      },
       partialize: (state) => ({
         viewMode: state.viewMode,
         studyConfig: state.studyConfig,
@@ -376,7 +373,6 @@ export const useStore = create<ResearchState>()(
         synthesis: state.synthesis,
         contextEntries: state.contextEntries,
         currentStep: state.currentStep,
-        participantToken: null,
         participantSessionHandle: state.participantSessionHandle
       })
     }

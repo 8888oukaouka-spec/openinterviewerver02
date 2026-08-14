@@ -31,7 +31,6 @@ export const generateInterviewResponse = async (
   participantProfile: ParticipantProfile | null,
   questionProgress: QuestionProgress,
   currentContext: string,
-  participantToken?: string | null,
   researcherPreview = false,
   participantSessionHandle?: string | null
 ): Promise<AIInterviewResponse> => {
@@ -62,7 +61,6 @@ export const generateInterviewResponse = async (
 // Get initial interview greeting
 export const getInterviewGreeting = async (
   studyConfig: StudyConfig,
-  participantToken?: string | null,
   researcherPreview = false,
   participantSessionHandle?: string | null
 ): Promise<string> => {
@@ -91,7 +89,6 @@ export const synthesizeInterview = async (
   studyConfig: StudyConfig,
   behaviorData: BehaviorData,
   participantProfile: ParticipantProfile | null,
-  participantToken?: string | null,
   researcherPreview = false,
   participantSessionHandle?: string | null
 ): Promise<SynthesisResult> => {
@@ -115,44 +112,5 @@ export const synthesizeInterview = async (
   } catch (error) {
     console.error('Error synthesizing interview:', error);
     throw error;
-  }
-};
-
-// Generate participant link
-export const generateParticipantLink = async (
-  studyConfig: StudyConfig
-): Promise<{ token: string; url: string }> => {
-  try {
-    const response = await fetch('/api/generate-link', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ studyConfig })
-    });
-
-    if (!response.ok) {
-      throw new Error(`API error: ${response.status}`);
-    }
-
-    return await response.json();
-  } catch (error) {
-    console.error('Error generating participant link:', error);
-    throw error;
-  }
-};
-
-// Verify participant token
-export const verifyParticipantToken = async (
-  token: string
-): Promise<{
-  valid: boolean;
-  data?: { studyConfig: StudyConfig; sessionHandle: string };
-  error?: string;
-}> => {
-  try {
-    const response = await fetch(`/api/generate-link?token=${encodeURIComponent(token)}`);
-    return await response.json();
-  } catch (error) {
-    console.error('Error verifying token:', error);
-    return { valid: false };
   }
 };

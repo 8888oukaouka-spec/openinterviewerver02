@@ -5,6 +5,7 @@ const cloneCommands = `git clone https://github.com/linxule/openinterviewer.git
 cd openinterviewer
 npm ci
 cp .env.example .env.local
+# Fill the required standalone values in .env.local, then:
 npm run setup:check -- --mode standalone
 npm run dev`;
 
@@ -21,7 +22,8 @@ export default function SelfHostPage() {
           <h1 className="text-3xl font-bold">Your deployment, credentials, and storage</h1>
           <p className="text-stone-400">
             Standalone mode keeps researcher credentials in your server environment. It needs Node 24.15+,
-            one Gemini or Claude key, an Upstash Redis REST URL and token, and four independent secrets.
+            one Google Gemini, Anthropic Claude, OpenAI, or OpenRouter key, an Upstash Redis REST URL and
+            token, and four independent secrets.
           </p>
         </section>
 

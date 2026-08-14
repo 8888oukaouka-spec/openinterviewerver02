@@ -11,13 +11,13 @@ import { useStore } from '@/store';
  * the input must be disabled.
  */
 
-const geminiServiceMock = vi.hoisted(() => ({
+const interviewApiMock = vi.hoisted(() => ({
   getInterviewGreeting: vi.fn(),
   generateInterviewResponse: vi.fn(),
 }));
 const routerMock = vi.hoisted(() => ({ push: vi.fn() }));
 
-vi.mock('@/services/geminiService', () => geminiServiceMock);
+vi.mock('@/services/interviewApi', () => interviewApiMock);
 
 vi.mock('next/navigation', () => ({
   useRouter: () => routerMock,
@@ -34,7 +34,6 @@ function seedStore() {
     interviewHistory: [],
     contextEntries: [],
     isAiThinking: false,
-    participantToken: null,
   });
 }
 
@@ -51,7 +50,7 @@ afterEach(() => {
 
 describe('InterviewChat greeting lifecycle', () => {
   it('settles thinking and enables the input when the greeting succeeds', async () => {
-    geminiServiceMock.getInterviewGreeting.mockResolvedValue('Welcome to the study!');
+    interviewApiMock.getInterviewGreeting.mockResolvedValue('Welcome to the study!');
     render(<InterviewChat />);
 
     expect(await screen.findByText('Welcome to the study!')).toBeInTheDocument();
@@ -61,7 +60,7 @@ describe('InterviewChat greeting lifecycle', () => {
   });
 
   it('gives the response input and icon-only send control accessible names', async () => {
-    geminiServiceMock.getInterviewGreeting.mockResolvedValue('Welcome to the study!');
+    interviewApiMock.getInterviewGreeting.mockResolvedValue('Welcome to the study!');
     render(<InterviewChat />);
 
     await screen.findByText('Welcome to the study!');
@@ -70,7 +69,7 @@ describe('InterviewChat greeting lifecycle', () => {
   });
 
   it('settles thinking and enables the input when the greeting rejects', async () => {
-    geminiServiceMock.getInterviewGreeting.mockRejectedValue(new Error('provider unavailable'));
+    interviewApiMock.getInterviewGreeting.mockRejectedValue(new Error('provider unavailable'));
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     render(<InterviewChat />);
 
@@ -83,7 +82,7 @@ describe('InterviewChat greeting lifecycle', () => {
 
   it('keeps the input disabled and shows Thinking while the greeting is pending', async () => {
     let resolveGreeting!: (value: string) => void;
-    geminiServiceMock.getInterviewGreeting.mockReturnValue(
+    interviewApiMock.getInterviewGreeting.mockReturnValue(
       new Promise<string>((resolve) => {
         resolveGreeting = resolve;
       })
@@ -105,12 +104,12 @@ describe('InterviewChat greeting lifecycle', () => {
   });
 
   it('renders exactly one greeting message when the effect re-runs', async () => {
-    geminiServiceMock.getInterviewGreeting.mockResolvedValue('Single greeting');
+    interviewApiMock.getInterviewGreeting.mockResolvedValue('Single greeting');
     render(<InterviewChat />);
 
     expect(await screen.findByText('Single greeting')).toBeInTheDocument();
     // Effect re-runs when interviewHistory changes; must not double-greet
-    expect(geminiServiceMock.getInterviewGreeting).toHaveBeenCalledTimes(1);
+    expect(interviewApiMock.getInterviewGreeting).toHaveBeenCalledTimes(1);
     expect(screen.getAllByText('Single greeting')).toHaveLength(1);
   });
 
@@ -119,8 +118,8 @@ describe('InterviewChat greeting lifecycle', () => {
       viewMode: 'participant',
       participantSessionHandle: 'participant-handle-a-123456',
     });
-    geminiServiceMock.getInterviewGreeting.mockResolvedValue('Welcome!');
-    geminiServiceMock.generateInterviewResponse.mockResolvedValue({
+    interviewApiMock.getInterviewGreeting.mockResolvedValue('Welcome!');
+    interviewApiMock.generateInterviewResponse.mockResolvedValue({
       message: 'Tell me more.',
       questionAddressed: null,
       phaseTransition: null,
@@ -130,9 +129,8 @@ describe('InterviewChat greeting lifecycle', () => {
 
     render(<InterviewChat />);
     await screen.findByText('Welcome!');
-    expect(geminiServiceMock.getInterviewGreeting).toHaveBeenCalledWith(
+    expect(interviewApiMock.getInterviewGreeting).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'study-g' }),
-      null,
       false,
       'participant-handle-a-123456'
     );
@@ -141,21 +139,20 @@ describe('InterviewChat greeting lifecycle', () => {
     fireEvent.keyDown(input(), { key: 'Enter' });
     await screen.findByText('Tell me more.');
 
-    expect(geminiServiceMock.generateInterviewResponse).toHaveBeenCalledWith(
+    expect(interviewApiMock.generateInterviewResponse).toHaveBeenCalledWith(
       expect.any(Array),
       expect.objectContaining({ id: 'study-g' }),
       null,
       expect.any(Object),
       '',
-      null,
       false,
       'participant-handle-a-123456'
     );
   });
 
   it('sends a user message and re-enables the input after the reply settles', async () => {
-    geminiServiceMock.getInterviewGreeting.mockResolvedValue('Welcome!');
-    geminiServiceMock.generateInterviewResponse.mockResolvedValue({
+    interviewApiMock.getInterviewGreeting.mockResolvedValue('Welcome!');
+    interviewApiMock.generateInterviewResponse.mockResolvedValue({
       message: 'Tell me more about that.',
       questionAddressed: null,
       phaseTransition: null,

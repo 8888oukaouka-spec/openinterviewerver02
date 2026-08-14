@@ -69,6 +69,58 @@ test('a complete production standalone setup passes', () => {
   assert.equal(report.ok, true, JSON.stringify(report.checks));
 });
 
+test('each standalone AI provider independently satisfies the provider contract', () => {
+  const providers = [
+    ['gemini', 'GEMINI_API_KEY'],
+    ['claude', 'ANTHROPIC_API_KEY'],
+    ['openai', 'OPENAI_API_KEY'],
+    ['openrouter', 'OPENROUTER_API_KEY'],
+  ];
+
+  for (const [provider, keyName] of providers) {
+    const env = validStandaloneEnv();
+    delete env.GEMINI_API_KEY;
+    env.AI_PROVIDER = provider;
+    env[keyName] = secret(provider.at(0));
+
+    const report = validateSetup({
+      mode: 'standalone',
+      production: true,
+      env,
+      nodeVersion: '24.15.0',
+    });
+    assert.equal(report.ok, true, `${provider}: ${JSON.stringify(report.checks)}`);
+  }
+});
+
+test('standalone selected provider requires its matching key', () => {
+  const env = validStandaloneEnv();
+  env.AI_PROVIDER = 'openai';
+  const report = validateSetup({
+    mode: 'standalone',
+    production: true,
+    env,
+    nodeVersion: '24.15.0',
+  });
+
+  assert.equal(report.ok, false);
+  assert.equal(report.checks.some((item) => item.code === 'env.AI_PROVIDER.openai'), true);
+});
+
+test('standalone rejects an unknown AI provider', () => {
+  const env = validStandaloneEnv();
+  env.AI_PROVIDER = 'unknown';
+  const report = validateSetup({
+    mode: 'standalone',
+    production: true,
+    env,
+    nodeVersion: '24.15.0',
+  });
+
+  assert.equal(report.ok, false);
+  assert.equal(report.checks.some((item) => item.code === 'env.AI_PROVIDER.invalid'), true);
+});
+
 test('standalone signing and rate-limit secrets must be independent', () => {
   const env = validStandaloneEnv();
   env.PARTICIPANT_TOKEN_SECRET = env.SESSION_SECRET;
@@ -82,6 +134,24 @@ test('hosted setup uses platform infrastructure and versioned credential keys', 
   const report = validateSetup({ mode: 'hosted', production: true, env, nodeVersion: '24.15.0' });
   assert.equal(report.ok, true, JSON.stringify(report.checks));
   assert.equal(report.checks.some((item) => item.code === 'env.aiProvider.missing'), false);
+});
+
+test('hosted setup warns that deployment-owner provider keys are ignored', () => {
+  const providerKeys = [
+    'GEMINI_API_KEY',
+    'ANTHROPIC_API_KEY',
+    'OPENAI_API_KEY',
+    'OPENROUTER_API_KEY',
+  ];
+  const env = validHostedEnv();
+  for (const name of providerKeys) env[name] = secret(name.at(0));
+
+  const report = validateSetup({ mode: 'hosted', production: true, env, nodeVersion: '24.15.0' });
+  assert.equal(report.ok, true, JSON.stringify(report.checks));
+  for (const name of providerKeys) {
+    assert.equal(report.checks.some((item) => item.code === `env.${name}.hosted`), true);
+    assert.equal(JSON.stringify(report).includes(env[name]), false);
+  }
 });
 
 test('credential key IDs match the runtime envelope contract', () => {

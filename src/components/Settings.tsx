@@ -5,24 +5,152 @@ import { motion } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import {
   Database, Key, CheckCircle, XCircle, Loader2,
-  AlertCircle, ExternalLink, ArrowLeft, ChevronDown, ChevronUp, Trash2, RotateCw
+  AlertCircle, ArrowLeft, ChevronDown, ChevronUp, Trash2, RotateCw
 } from 'lucide-react';
-
-interface ResearcherProfile {
-  name: string;
-  email: string;
-  avatarUrl: string | null;
-  hasRedisConfigured: boolean;
-  hasGeminiKey: boolean;
-  hasAnthropicKey: boolean;
-  onboardingComplete: boolean;
-}
+import type { AIProviderType, ResearcherProfile } from '@/types';
+import { PROVIDER_OPTIONS } from '@/lib/providerRegistry';
 
 interface ValidationState {
   loading: boolean;
   valid: boolean | null;
   error: string | null;
 }
+
+type ProviderProfileField = 'hasGeminiKey' | 'hasAnthropicKey' | 'hasOpenAiKey' | 'hasOpenRouterKey';
+type CredentialField = 'geminiApiKey' | 'anthropicApiKey' | 'openAiApiKey' | 'openRouterApiKey';
+type CredentialTarget = 'gemini' | 'anthropic' | 'openai' | 'openrouter';
+
+type ProviderSetup = {
+  id: AIProviderType;
+  label: string;
+  statusLabel: string;
+  inputId: string;
+  placeholder: string;
+  profileField: ProviderProfileField;
+  credentialField: CredentialField;
+  clearTarget: CredentialTarget;
+  keyUrl: string;
+  keyUrlLabel: string;
+  steps: string[];
+  guidance: React.ReactNode;
+};
+
+const providerLabel = (provider: AIProviderType) =>
+  PROVIDER_OPTIONS.find(option => option.id === provider)!.label;
+
+const AI_PROVIDER_SETUP: ProviderSetup[] = [
+  {
+    id: 'gemini',
+    label: providerLabel('gemini'),
+    statusLabel: 'Gemini Key',
+    inputId: 'settings-gemini-key',
+    placeholder: 'AIza...',
+    profileField: 'hasGeminiKey',
+    credentialField: 'geminiApiKey',
+    clearTarget: 'gemini',
+    keyUrl: 'https://aistudio.google.com/apikey',
+    keyUrlLabel: 'Google AI Studio',
+    steps: ['Sign in and create an API key', 'Copy the new key'],
+    guidance: (
+      <>
+        Pricing, free-tier availability, and rate limits vary by model and account. Check Google&apos;s current{' '}
+        <a href="https://ai.google.dev/gemini-api/docs/pricing" target="_blank" rel="noopener noreferrer" className="text-stone-300 hover:text-white underline">pricing</a>
+        {' '}and{' '}
+        <a href="https://ai.google.dev/gemini-api/docs/rate-limits" target="_blank" rel="noopener noreferrer" className="text-stone-300 hover:text-white underline">rate-limit documentation</a>.
+      </>
+    ),
+  },
+  {
+    id: 'claude',
+    label: providerLabel('claude'),
+    statusLabel: 'Claude Key',
+    inputId: 'settings-claude-key',
+    placeholder: 'sk-ant-...',
+    profileField: 'hasAnthropicKey',
+    credentialField: 'anthropicApiKey',
+    clearTarget: 'anthropic',
+    keyUrl: 'https://console.anthropic.com/settings/keys',
+    keyUrlLabel: 'Anthropic Console',
+    steps: ['Sign in or create an account', 'Create an API key', 'Copy the new key'],
+    guidance: (
+      <>
+        Credits, billing requirements, pricing, and usage limits vary. Check the Anthropic console and{' '}
+        <a href="https://platform.claude.com/docs/en/about-claude/pricing" target="_blank" rel="noopener noreferrer" className="text-stone-300 hover:text-white underline">current pricing documentation</a>.
+      </>
+    ),
+  },
+  {
+    id: 'openai',
+    label: providerLabel('openai'),
+    statusLabel: 'OpenAI Key',
+    inputId: 'settings-openai-key',
+    placeholder: 'sk-...',
+    profileField: 'hasOpenAiKey',
+    credentialField: 'openAiApiKey',
+    clearTarget: 'openai',
+    keyUrl: 'https://platform.openai.com/api-keys',
+    keyUrlLabel: 'OpenAI Platform',
+    steps: ['Sign in or create an account', 'Create a new secret key', 'Copy the key before leaving the page'],
+    guidance: (
+      <>
+        API billing, model access, and usage limits depend on your account. Check OpenAI&apos;s current{' '}
+        <a href="https://developers.openai.com/api/docs/pricing" target="_blank" rel="noopener noreferrer" className="text-stone-300 hover:text-white underline">API pricing</a>.
+      </>
+    ),
+  },
+  {
+    id: 'openrouter',
+    label: providerLabel('openrouter'),
+    statusLabel: 'OpenRouter Key',
+    inputId: 'settings-openrouter-key',
+    placeholder: 'sk-or-v1-...',
+    profileField: 'hasOpenRouterKey',
+    credentialField: 'openRouterApiKey',
+    clearTarget: 'openrouter',
+    keyUrl: 'https://openrouter.ai/settings/keys',
+    keyUrlLabel: 'OpenRouter Keys',
+    steps: ['Sign in or create an account', 'Create an API key', 'Copy the new key'],
+    guidance: (
+      <>
+        OpenRouter routes requests to upstream inference providers. OpenInterviewer requires compatible
+        zero-data-retention routes and denies provider data collection; requests fail if those restrictions cannot
+        be met. Review OpenRouter&apos;s{' '}
+        <a href="https://openrouter.ai/docs/guides/features/zdr" target="_blank" rel="noopener noreferrer" className="text-stone-300 hover:text-white underline">privacy and ZDR documentation</a>.
+      </>
+    ),
+  },
+];
+
+const emptyValidationState = (): ValidationState => ({ loading: false, valid: null, error: null });
+
+const initialProviderRecord = <T,>(create: () => T): Record<AIProviderType, T> => ({
+  gemini: create(),
+  claude: create(),
+  openai: create(),
+  openrouter: create(),
+});
+
+const StatusIcon: React.FC<{ configured: boolean }> = ({ configured }) =>
+  configured
+    ? <CheckCircle size={16} aria-hidden="true" className="text-green-400" />
+    : <XCircle size={16} aria-hidden="true" className="text-stone-500" />;
+
+const ValidationBadge: React.FC<{ state: ValidationState; label: string }> = ({ state, label }) => {
+  if (state.loading) return (
+    <span role="status" aria-live="polite">
+      <Loader2 size={16} aria-hidden="true" className="animate-spin text-stone-400" />
+      <span className="sr-only">Testing {label} key</span>
+    </span>
+  );
+  if (state.valid === true) return (
+    <span role="status" aria-live="polite">
+      <CheckCircle size={16} aria-hidden="true" className="text-green-400" />
+      <span className="sr-only">{label} key validated</span>
+    </span>
+  );
+  if (state.valid === false) return <AlertCircle size={16} aria-hidden="true" className="text-red-400" />;
+  return null;
+};
 
 const Settings: React.FC = () => {
   const router = useRouter();
@@ -31,14 +159,14 @@ const Settings: React.FC = () => {
   const [loading, setLoading] = useState(true);
 
   // Form state
-  const [geminiKey, setGeminiKey] = useState('');
-  const [anthropicKey, setAnthropicKey] = useState('');
+  const [providerKeys, setProviderKeys] = useState<Record<AIProviderType, string>>(() => initialProviderRecord(() => ''));
   const [redisUrl, setRedisUrl] = useState('');
   const [redisToken, setRedisToken] = useState('');
 
   // Validation state
-  const [geminiValidation, setGeminiValidation] = useState<ValidationState>({ loading: false, valid: null, error: null });
-  const [anthropicValidation, setAnthropicValidation] = useState<ValidationState>({ loading: false, valid: null, error: null });
+  const [providerValidation, setProviderValidation] = useState<Record<AIProviderType, ValidationState>>(
+    () => initialProviderRecord(emptyValidationState)
+  );
   const [redisValidation, setRedisValidation] = useState<ValidationState>({ loading: false, valid: null, error: null });
 
   const [saving, setSaving] = useState(false);
@@ -48,8 +176,9 @@ const Settings: React.FC = () => {
   const [deleteConfirmation, setDeleteConfirmation] = useState('');
 
   // Expandable guide state
-  const [geminiGuideOpen, setGeminiGuideOpen] = useState(false);
-  const [claudeGuideOpen, setClaudeGuideOpen] = useState(false);
+  const [providerGuideOpen, setProviderGuideOpen] = useState<Record<AIProviderType, boolean>>(
+    () => initialProviderRecord(() => false)
+  );
   const [redisGuideOpen, setRedisGuideOpen] = useState(false);
 
   useEffect(() => {
@@ -74,9 +203,11 @@ const Settings: React.FC = () => {
     if (data.profile) setProfile(data.profile);
   };
 
-  const validateAiKey = async (provider: 'gemini' | 'claude', apiKey: string) => {
-    const setValidation = provider === 'gemini' ? setGeminiValidation : setAnthropicValidation;
-    setValidation({ loading: true, valid: null, error: null });
+  const validateAiKey = async (provider: AIProviderType, apiKey: string) => {
+    setProviderValidation(current => ({
+      ...current,
+      [provider]: { loading: true, valid: null, error: null },
+    }));
 
     try {
       const res = await fetch('/api/onboarding/validate-ai-key', {
@@ -85,9 +216,15 @@ const Settings: React.FC = () => {
         body: JSON.stringify({ provider, apiKey }),
       });
       const data = await res.json();
-      setValidation({ loading: false, valid: data.valid, error: data.error || null });
+      setProviderValidation(current => ({
+        ...current,
+        [provider]: { loading: false, valid: data.valid === true, error: data.error || null },
+      }));
     } catch {
-      setValidation({ loading: false, valid: false, error: 'Validation failed' });
+      setProviderValidation(current => ({
+        ...current,
+        [provider]: { loading: false, valid: false, error: 'Validation failed' },
+      }));
     }
   };
 
@@ -106,7 +243,7 @@ const Settings: React.FC = () => {
     }
   };
 
-  const hasChanges = !!(geminiKey || anthropicKey || (redisUrl && redisToken));
+  const hasChanges = Object.values(providerKeys).some(Boolean) || Boolean(redisUrl && redisToken);
 
   const handleSave = async () => {
     setSaving(true);
@@ -114,9 +251,11 @@ const Settings: React.FC = () => {
     setSaveError(null);
 
     try {
-      const body: Record<string, string | undefined> = {};
-      if (geminiKey) body.geminiApiKey = geminiKey;
-      if (anthropicKey) body.anthropicApiKey = anthropicKey;
+      const body: Record<string, string> = {};
+      for (const provider of AI_PROVIDER_SETUP) {
+        const apiKey = providerKeys[provider.id];
+        if (apiKey) body[provider.credentialField] = apiKey;
+      }
       if (redisUrl && redisToken) {
         body.redisUrl = redisUrl;
         body.redisToken = redisToken;
@@ -138,8 +277,8 @@ const Settings: React.FC = () => {
         // Refresh profile
         await refreshProfile();
         // Clear form fields
-        setGeminiKey('');
-        setAnthropicKey('');
+        setProviderKeys(initialProviderRecord(() => ''));
+        setProviderValidation(initialProviderRecord(emptyValidationState));
         setRedisUrl('');
         setRedisToken('');
         setTimeout(() => setSaveSuccess(false), 3000);
@@ -155,7 +294,7 @@ const Settings: React.FC = () => {
   };
 
   const clearCredential = async (
-    target: 'gemini' | 'anthropic' | 'redis' | 'all',
+    target: CredentialTarget | 'redis' | 'all',
     label: string
   ) => {
     if (!window.confirm(`Clear ${label}? Active studies that depend on it may stop working.`)) return;
@@ -170,6 +309,21 @@ const Settings: React.FC = () => {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || 'Failed to clear credential');
+      const provider = AI_PROVIDER_SETUP.find(option => option.clearTarget === target);
+      if (provider) {
+        setProviderKeys(current => ({ ...current, [provider.id]: '' }));
+        setProviderValidation(current => ({ ...current, [provider.id]: emptyValidationState() }));
+      } else if (target === 'redis') {
+        setRedisUrl('');
+        setRedisToken('');
+        setRedisValidation(emptyValidationState());
+      } else if (target === 'all') {
+        setProviderKeys(initialProviderRecord(() => ''));
+        setProviderValidation(initialProviderRecord(emptyValidationState));
+        setRedisUrl('');
+        setRedisToken('');
+        setRedisValidation(emptyValidationState());
+      }
       await refreshProfile();
       setSaveSuccess(true);
     } catch (error) {
@@ -197,18 +351,6 @@ const Settings: React.FC = () => {
       setSaveError(error instanceof Error ? error.message : 'Failed to delete account');
       setLifecycleBusy(null);
     }
-  };
-
-  const StatusIcon: React.FC<{ configured: boolean }> = ({ configured }) =>
-    configured
-      ? <CheckCircle size={16} className="text-green-400" />
-      : <XCircle size={16} className="text-stone-500" />;
-
-  const ValidationBadge: React.FC<{ state: ValidationState }> = ({ state }) => {
-    if (state.loading) return <Loader2 size={16} className="animate-spin text-stone-400" />;
-    if (state.valid === true) return <CheckCircle size={16} className="text-green-400" />;
-    if (state.valid === false) return <AlertCircle size={16} className="text-red-400" />;
-    return null;
   };
 
   if (loading) {
@@ -295,18 +437,26 @@ const Settings: React.FC = () => {
         {profile && (
           <div className="bg-stone-800/50 rounded-xl border border-stone-700 p-6 mb-6">
             <h2 className="text-lg font-semibold text-white mb-4">Current Status</h2>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
-              <div className="flex items-center gap-2">
-                <StatusIcon configured={profile.hasGeminiKey} />
-                <span className="text-stone-300 text-sm">Gemini Key</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <StatusIcon configured={profile.hasAnthropicKey} />
-                <span className="text-stone-300 text-sm">Claude Key</span>
-              </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
+              {AI_PROVIDER_SETUP.map(provider => (
+                <div key={provider.id} className="flex items-center gap-2">
+                  <StatusIcon configured={Boolean(profile[provider.profileField])} />
+                  <span className="text-stone-300 text-sm">
+                    {provider.statusLabel}
+                    <span className="sr-only">
+                      {profile[provider.profileField] ? ': configured' : ': not configured'}
+                    </span>
+                  </span>
+                </div>
+              ))}
               <div className="flex items-center gap-2">
                 <StatusIcon configured={profile.hasRedisConfigured} />
-                <span className="text-stone-300 text-sm">Redis Storage</span>
+                <span className="text-stone-300 text-sm">
+                  Redis Storage
+                  <span className="sr-only">
+                    {profile.hasRedisConfigured ? ': configured' : ': not configured'}
+                  </span>
+                </span>
               </div>
             </div>
           </div>
@@ -333,9 +483,10 @@ const Settings: React.FC = () => {
             The hosted server decrypts them in memory when connecting on your behalf, and the app operator
             controls the encryption keys and therefore can technically decrypt stored values. The service can
             read and write your supplied Redis database; participant interview content is sent to the AI provider
-            selected for a study. Secrets are never returned to this page. Rotate a credential by entering its
-            replacement below, clear it here to disconnect the app, and rotate it at the provider to revoke access
-            completely.
+            selected for a study. OpenRouter also routes that content to an upstream inference provider and is
+            constrained to compatible zero-data-retention, no-data-collection routes. Secrets are never returned
+            to this page. Rotate a credential by entering its replacement below, clear it here to disconnect the
+            app, and rotate it at the provider to revoke access completely.
           </p>
         </div>
 
@@ -350,125 +501,92 @@ const Settings: React.FC = () => {
           </p>
 
           <div className="space-y-4">
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label htmlFor="settings-gemini-key" className="text-sm font-medium text-stone-300">Gemini API Key</label>
-                <div className="flex items-center gap-2">
-                  <ValidationBadge state={geminiValidation} />
-                  {profile?.hasGeminiKey && (
-                    <button
-                      type="button"
-                      onClick={() => clearCredential('gemini', 'the Gemini key')}
-                      disabled={!!lifecycleBusy}
-                      className="text-xs text-red-300 hover:text-red-200 disabled:opacity-50"
-                    >Clear</button>
-                  )}
-                </div>
-              </div>
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <input
-                  id="settings-gemini-key"
-                  type="password"
-                  value={geminiKey}
-                  onChange={(e) => { setGeminiKey(e.target.value); setGeminiValidation({ loading: false, valid: null, error: null }); }}
-                  placeholder={profile?.hasGeminiKey ? '(currently set)' : 'AIza...'}
-                  className="min-w-0 flex-1 px-3 py-2 rounded-lg bg-stone-800 border border-stone-600 text-stone-100 placeholder-stone-500 text-sm focus:outline-none focus:ring-2 focus:ring-stone-500"
-                />
-                <button
-                  onClick={() => validateAiKey('gemini', geminiKey)}
-                  disabled={!geminiKey || geminiValidation.loading}
-                  className="px-3 py-2 bg-stone-700 hover:bg-stone-600 disabled:opacity-50 text-stone-300 text-sm rounded-lg transition-colors sm:self-auto"
-                >
-                  Test
-                </button>
-              </div>
-              {geminiValidation.error && <p className="text-red-400 text-xs mt-1">{geminiValidation.error}</p>}
-
-              {/* Expandable setup guide */}
-              <div className="mt-2">
-                <button
-                  onClick={() => setGeminiGuideOpen(!geminiGuideOpen)}
-                  className="text-xs text-stone-500 hover:text-stone-400 inline-flex items-center gap-1"
-                >
-                  {geminiGuideOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                  Setup guide
-                </button>
-
-                {geminiGuideOpen && (
-                  <div className="mt-2 p-3 bg-stone-800/30 border border-stone-600 rounded-lg text-xs space-y-2">
-                    <ol className="list-decimal list-inside space-y-1 text-stone-300">
-                      <li>Go to <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="text-stone-400 hover:text-stone-300 underline">aistudio.google.com/apikey</a></li>
-                      <li>Sign in and click &quot;Create API key&quot;</li>
-                      <li>Copy the key (starts with AIza)</li>
-                    </ol>
-                    <div className="flex items-start gap-1.5 text-stone-400 mt-2">
-                      <span>•</span>
-                      <span>Free: 10 req/min, 250 req/day</span>
+            {AI_PROVIDER_SETUP.map(provider => {
+              const validation = providerValidation[provider.id];
+              const configured = Boolean(profile?.[provider.profileField]);
+              const guideOpen = providerGuideOpen[provider.id];
+              const errorId = `${provider.inputId}-error`;
+              return (
+                <div key={provider.id}>
+                  <div className="flex items-center justify-between mb-1">
+                    <label htmlFor={provider.inputId} className="text-sm font-medium text-stone-300">
+                      {provider.label} API Key
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <ValidationBadge state={validation} label={provider.label} />
+                      {configured ? (
+                        <button
+                          type="button"
+                          onClick={() => clearCredential(provider.clearTarget, `the ${provider.label} key`)}
+                          disabled={Boolean(lifecycleBusy)}
+                          className="text-xs text-red-300 hover:text-red-200 disabled:opacity-50"
+                        >
+                          {lifecycleBusy === provider.clearTarget ? 'Clearing…' : 'Clear'}
+                        </button>
+                      ) : null}
                     </div>
                   </div>
-                )}
-              </div>
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label htmlFor="settings-claude-key" className="text-sm font-medium text-stone-300">Claude API Key</label>
-                <div className="flex items-center gap-2">
-                  <ValidationBadge state={anthropicValidation} />
-                  {profile?.hasAnthropicKey && (
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <input
+                      id={provider.inputId}
+                      type="password"
+                      value={providerKeys[provider.id]}
+                      onChange={(event) => {
+                        setProviderKeys(current => ({ ...current, [provider.id]: event.target.value }));
+                        setProviderValidation(current => ({ ...current, [provider.id]: emptyValidationState() }));
+                      }}
+                      placeholder={configured ? '(currently set)' : provider.placeholder}
+                      autoComplete="new-password"
+                      aria-describedby={validation.error ? errorId : undefined}
+                      className="min-w-0 flex-1 px-3 py-2 rounded-lg bg-stone-800 border border-stone-600 text-stone-100 placeholder-stone-500 text-sm focus:outline-none focus:ring-2 focus:ring-stone-500"
+                    />
                     <button
                       type="button"
-                      onClick={() => clearCredential('anthropic', 'the Claude key')}
-                      disabled={!!lifecycleBusy}
-                      className="text-xs text-red-300 hover:text-red-200 disabled:opacity-50"
-                    >Clear</button>
-                  )}
-                </div>
-              </div>
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <input
-                  id="settings-claude-key"
-                  type="password"
-                  value={anthropicKey}
-                  onChange={(e) => { setAnthropicKey(e.target.value); setAnthropicValidation({ loading: false, valid: null, error: null }); }}
-                  placeholder={profile?.hasAnthropicKey ? '(currently set)' : 'sk-ant-...'}
-                  className="min-w-0 flex-1 px-3 py-2 rounded-lg bg-stone-800 border border-stone-600 text-stone-100 placeholder-stone-500 text-sm focus:outline-none focus:ring-2 focus:ring-stone-500"
-                />
-                <button
-                  onClick={() => validateAiKey('claude', anthropicKey)}
-                  disabled={!anthropicKey || anthropicValidation.loading}
-                  className="px-3 py-2 bg-stone-700 hover:bg-stone-600 disabled:opacity-50 text-stone-300 text-sm rounded-lg transition-colors"
-                >
-                  Test
-                </button>
-              </div>
-              {anthropicValidation.error && <p className="text-red-400 text-xs mt-1">{anthropicValidation.error}</p>}
-
-              {/* Expandable setup guide */}
-              <div className="mt-2">
-                <button
-                  onClick={() => setClaudeGuideOpen(!claudeGuideOpen)}
-                  className="text-xs text-stone-500 hover:text-stone-400 inline-flex items-center gap-1"
-                >
-                  {claudeGuideOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                  Setup guide
-                </button>
-
-                {claudeGuideOpen && (
-                  <div className="mt-2 p-3 bg-stone-800/30 border border-stone-600 rounded-lg text-xs space-y-2">
-                    <ol className="list-decimal list-inside space-y-1 text-stone-300">
-                      <li>Go to <a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer" className="text-stone-400 hover:text-stone-300 underline">console.anthropic.com</a></li>
-                      <li>Sign up and claim $5 free credits (US phone verification required)</li>
-                      <li>Go to API Keys → Create API Key → copy it (starts with sk-ant-)</li>
-                    </ol>
-                    <div className="flex items-start gap-1.5 text-stone-400 mt-2">
-                      <span>•</span>
-                      <span>$5 free ≈ 15-100 interviews</span>
-                    </div>
+                      onClick={() => validateAiKey(provider.id, providerKeys[provider.id])}
+                      disabled={!providerKeys[provider.id] || validation.loading}
+                      className="px-3 py-2 bg-stone-700 hover:bg-stone-600 disabled:opacity-50 text-stone-300 text-sm rounded-lg transition-colors"
+                    >
+                      {validation.loading ? 'Testing…' : 'Test'}
+                    </button>
                   </div>
-                )}
-              </div>
-            </div>
+                  {validation.error ? (
+                    <p id={errorId} role="alert" className="text-red-400 text-xs mt-1">
+                      {validation.error}
+                    </p>
+                  ) : null}
+
+                  <div className="mt-2">
+                    <button
+                      type="button"
+                      aria-expanded={guideOpen}
+                      onClick={() => setProviderGuideOpen(current => ({
+                        ...current,
+                        [provider.id]: !current[provider.id],
+                      }))}
+                      className="text-xs text-stone-500 hover:text-stone-400 inline-flex items-center gap-1"
+                    >
+                      {guideOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                      {provider.label} setup guide
+                    </button>
+
+                    {guideOpen ? (
+                      <div className="mt-2 p-3 bg-stone-800/30 border border-stone-600 rounded-lg text-xs space-y-2">
+                        <ol className="list-decimal list-inside space-y-1 text-stone-300">
+                          <li>
+                            Open{' '}
+                            <a href={provider.keyUrl} target="_blank" rel="noopener noreferrer" className="text-stone-400 hover:text-stone-300 underline">
+                              {provider.keyUrlLabel}
+                            </a>
+                          </li>
+                          {provider.steps.map(instruction => <li key={instruction}>{instruction}</li>)}
+                        </ol>
+                        <p className="text-stone-400 mt-2">{provider.guidance}</p>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -501,6 +619,7 @@ const Settings: React.FC = () => {
                 value={redisUrl}
                 onChange={(e) => { setRedisUrl(e.target.value); setRedisValidation({ loading: false, valid: null, error: null }); }}
                 placeholder={profile?.hasRedisConfigured ? '(currently set)' : 'https://your-db.upstash.io'}
+                aria-describedby={redisValidation.error ? 'settings-redis-error' : undefined}
                 className="w-full px-3 py-2 rounded-lg bg-stone-800 border border-stone-600 text-stone-100 placeholder-stone-500 text-sm focus:outline-none focus:ring-2 focus:ring-stone-500"
               />
             </div>
@@ -512,14 +631,19 @@ const Settings: React.FC = () => {
                 value={redisToken}
                 onChange={(e) => { setRedisToken(e.target.value); setRedisValidation({ loading: false, valid: null, error: null }); }}
                 placeholder={profile?.hasRedisConfigured ? '(currently set)' : 'AXxx...'}
+                aria-describedby={redisValidation.error ? 'settings-redis-error' : undefined}
                 className="w-full px-3 py-2 rounded-lg bg-stone-800 border border-stone-600 text-stone-100 placeholder-stone-500 text-sm focus:outline-none focus:ring-2 focus:ring-stone-500"
               />
             </div>
             <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-2">
-                <ValidationBadge state={redisValidation} />
+                <ValidationBadge state={redisValidation} label="Redis connection" />
                 {redisValidation.valid && <span className="text-green-400 text-sm">Connected</span>}
-                {redisValidation.error && <span className="text-red-400 text-sm">{redisValidation.error}</span>}
+                {redisValidation.error && (
+                  <span id="settings-redis-error" role="alert" className="text-red-400 text-sm">
+                    {redisValidation.error}
+                  </span>
+                )}
               </div>
               <button
                 onClick={validateRedis}
@@ -544,7 +668,7 @@ const Settings: React.FC = () => {
                 <div className="mt-2 p-3 bg-stone-800/30 border border-stone-600 rounded-lg text-xs space-y-2">
                   <ol className="list-decimal list-inside space-y-1 text-stone-300">
                     <li>Go to <a href="https://console.upstash.com" target="_blank" rel="noopener noreferrer" className="text-stone-400 hover:text-stone-300 underline">console.upstash.com</a> and sign in</li>
-                    <li>Click &quot;+ Create Database&quot; → choose Regional and Free plan</li>
+                    <li>Click &quot;+ Create Database&quot; and choose the plan that fits your expected usage</li>
                     <li>After creation, go to database details → REST API section</li>
                     <li>Copy REST URL (https://*.upstash.io) and REST Token</li>
                   </ol>
@@ -552,6 +676,10 @@ const Settings: React.FC = () => {
                     <span>⚠</span>
                     <span>Use REST URL (https://), not regular URL (redis://)</span>
                   </div>
+                  <p className="text-stone-400">
+                    Plan availability, pricing, and limits vary. Check Upstash&apos;s current{' '}
+                    <a href="https://upstash.com/pricing/redis" target="_blank" rel="noopener noreferrer" className="text-stone-300 hover:text-white underline">Redis pricing</a>.
+                  </p>
                 </div>
               )}
             </div>
@@ -570,12 +698,12 @@ const Settings: React.FC = () => {
         <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             {saveSuccess && (
-              <span className="text-green-400 text-sm flex items-center gap-1">
+              <span role="status" aria-live="polite" className="text-green-400 text-sm flex items-center gap-1">
                 <CheckCircle size={14} /> Saved successfully
               </span>
             )}
             {saveError && (
-              <span className="text-red-400 text-sm flex items-center gap-1">
+              <span role="alert" className="text-red-400 text-sm flex items-center gap-1">
                 <AlertCircle size={14} /> {saveError}
               </span>
             )}

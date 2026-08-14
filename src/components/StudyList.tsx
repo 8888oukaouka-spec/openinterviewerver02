@@ -36,8 +36,8 @@ const StudyList: React.FC = () => {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [kvWarning, setKvWarning] = useState<string | null>(null);
-  const [loadingDemo, setLoadingDemo] = useState(false);
-  const [demoMessage, setDemoMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [loadingSample, setLoadingSample] = useState(false);
+  const [sampleMessage, setSampleMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [hostedMode, setHostedMode] = useState(false);
   const [operationNotice, setOperationNotice] = useState<string | null>(null);
   const [isReconciling, setIsReconciling] = useState(false);
@@ -128,55 +128,55 @@ const StudyList: React.FC = () => {
     }
   };
 
-  const handleLoadDemo = async () => {
-    setLoadingDemo(true);
-    setDemoMessage(null);
+  const handleLoadSample = async () => {
+    setLoadingSample(true);
+    setSampleMessage(null);
     try {
       const response = await fetch('/api/demo/seed', { method: 'POST' });
       const data = await response.json();
 
       if (response.ok) {
-        setDemoMessage({
+        setSampleMessage({
           type: 'success',
-          text: `Demo data loaded: ${data.data.studiesSeeded} study, ${data.data.interviewsSeeded} interviews`
+          text: `Sample workspace loaded: ${data.data.studiesSeeded} study, ${data.data.interviewsSeeded} interviews`
         });
         await loadStudies(); // Refresh the list
       } else {
-        setDemoMessage({ type: 'error', text: data.error || 'Failed to load demo data' });
+        setSampleMessage({ type: 'error', text: data.error || 'Failed to load sample workspace' });
       }
     } catch (error) {
-      console.error('Error loading demo:', error);
-      setDemoMessage({ type: 'error', text: 'Failed to load demo data' });
+      console.error('Error loading sample workspace:', error);
+      setSampleMessage({ type: 'error', text: 'Failed to load sample workspace' });
     } finally {
-      setLoadingDemo(false);
+      setLoadingSample(false);
     }
   };
 
-  const handleClearDemo = async () => {
-    if (!confirm('Are you sure you want to clear all demo data?')) return;
+  const handleClearSample = async () => {
+    if (!confirm('Clear the synthetic sample study and interviews from this workspace?')) return;
 
-    setLoadingDemo(true);
-    setDemoMessage(null);
+    setLoadingSample(true);
+    setSampleMessage(null);
     try {
       const response = await fetch('/api/demo/seed', { method: 'DELETE' });
       const data = await response.json();
 
       if (response.ok) {
-        setDemoMessage({ type: 'success', text: 'Demo data cleared' });
+        setSampleMessage({ type: 'success', text: 'Sample workspace cleared' });
         await loadStudies(); // Refresh the list
       } else {
-        setDemoMessage({ type: 'error', text: data.error || 'Failed to clear demo data' });
+        setSampleMessage({ type: 'error', text: data.error || 'Failed to clear sample workspace' });
       }
     } catch (error) {
-      console.error('Error clearing demo:', error);
-      setDemoMessage({ type: 'error', text: 'Failed to clear demo data' });
+      console.error('Error clearing sample workspace:', error);
+      setSampleMessage({ type: 'error', text: 'Failed to clear sample workspace' });
     } finally {
-      setLoadingDemo(false);
+      setLoadingSample(false);
     }
   };
 
-  // Check if demo data exists
-  const hasDemoData = studies.some(s => s.id.startsWith('demo-'));
+  // Historical records keep their demo-prefixed IDs for compatibility.
+  const hasSampleData = studies.some(s => s.id.startsWith('demo-'));
 
   const formatDate = (timestamp: number) => {
     return new Date(timestamp).toLocaleDateString('en-US', {
@@ -232,23 +232,23 @@ const StudyList: React.FC = () => {
                   Account &amp; connections
                 </button>
               )}
-              {hasDemoData ? (
+              {hasSampleData ? (
                 <button
-                  onClick={handleClearDemo}
-                  disabled={loadingDemo}
+                  onClick={handleClearSample}
+                  disabled={loadingSample}
                   className="px-4 py-2 text-sm border border-amber-700/50 text-amber-400 hover:bg-amber-900/30 rounded-xl transition-colors flex items-center gap-2 whitespace-nowrap disabled:opacity-50"
                 >
-                  {loadingDemo ? <Loader2 size={16} className="animate-spin" /> : <Database size={16} />}
-                  Clear Demo
+                  {loadingSample ? <Loader2 size={16} className="animate-spin" /> : <Database size={16} />}
+                  Clear Sample
                 </button>
               ) : (
                 <button
-                  onClick={handleLoadDemo}
-                  disabled={loadingDemo || !!kvWarning}
+                  onClick={handleLoadSample}
+                  disabled={loadingSample || !!kvWarning}
                   className="px-4 py-2 text-sm border border-purple-700/50 text-purple-400 hover:bg-purple-900/30 rounded-xl transition-colors flex items-center gap-2 whitespace-nowrap disabled:opacity-50"
                 >
-                  {loadingDemo ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-                  Load Demo
+                  {loadingSample ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                  Load Sample
                 </button>
               )}
               <button
@@ -262,7 +262,7 @@ const StudyList: React.FC = () => {
           </div>
         </motion.div>
 
-        {/* KV Warning Banner */}
+        {/* Upstash Redis warning banner */}
         {kvWarning && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}
@@ -274,7 +274,7 @@ const StudyList: React.FC = () => {
               <h4 className="font-medium text-amber-300 mb-1">Storage Not Configured</h4>
               <p className="text-sm text-amber-400/80">{kvWarning}</p>
               <p className="text-sm text-amber-400/60 mt-2">
-                See the README for setup instructions using Vercel KV (Upstash Redis).
+                See the README for setup instructions using Upstash Redis.
               </p>
             </div>
           </motion.div>
@@ -302,27 +302,27 @@ const StudyList: React.FC = () => {
           </motion.div>
         )}
 
-        {/* Demo Message Banner */}
-        {demoMessage && (
+        {/* Sample workspace message banner */}
+        {sampleMessage && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             className={`mb-6 rounded-xl p-4 flex items-center gap-3 ${
-              demoMessage.type === 'success'
+              sampleMessage.type === 'success'
                 ? 'bg-green-900/30 border border-green-700/50'
                 : 'bg-red-900/30 border border-red-700/50'
             }`}
           >
-            {demoMessage.type === 'success' ? (
+            {sampleMessage.type === 'success' ? (
               <Sparkles size={20} className="text-green-400 flex-shrink-0" />
             ) : (
               <AlertTriangle size={20} className="text-red-400 flex-shrink-0" />
             )}
-            <p className={`text-sm ${demoMessage.type === 'success' ? 'text-green-300' : 'text-red-300'}`}>
-              {demoMessage.text}
+            <p className={`text-sm ${sampleMessage.type === 'success' ? 'text-green-300' : 'text-red-300'}`}>
+              {sampleMessage.text}
             </p>
             <button
-              onClick={() => setDemoMessage(null)}
+              onClick={() => setSampleMessage(null)}
               className="ml-auto text-stone-500 hover:text-stone-300"
             >
               ×
@@ -346,7 +346,7 @@ const StudyList: React.FC = () => {
             </div>
             <h2 className="text-xl font-semibold text-white mb-2">No Studies Yet</h2>
             <p className="text-stone-400 mb-6">
-              Create your first study or load demo data to explore the platform.
+              Create your first study or load a synthetic sample workspace.
             </p>
             <div className="flex items-center justify-center gap-4">
               <button
@@ -358,22 +358,22 @@ const StudyList: React.FC = () => {
               </button>
               {!kvWarning && (
                 <button
-                  onClick={handleLoadDemo}
-                  disabled={loadingDemo}
+                  onClick={handleLoadSample}
+                  disabled={loadingSample}
                   className="px-6 py-3 border border-purple-700/50 text-purple-400 hover:bg-purple-900/30 rounded-xl transition-colors flex items-center gap-2 disabled:opacity-50"
                 >
-                  {loadingDemo ? (
+                  {loadingSample ? (
                     <Loader2 size={18} className="animate-spin" />
                   ) : (
                     <Sparkles size={18} />
                   )}
-                  Load Demo Data
+                  Load Sample
                 </button>
               )}
             </div>
             {!kvWarning && (
               <p className="text-stone-500 text-sm mt-4">
-                Demo includes a sample study with 3 completed interviews and AI analysis
+                The sample writes one fictional study, 3 completed interviews, and scripted analysis to your configured storage.
               </p>
             )}
           </motion.div>
