@@ -1,6 +1,6 @@
 {
   "name": "openinterviewer",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Open-source platform for adaptive, AI-assisted qualitative interviews.",
   "private": true,
   "license": "MIT",
@@ -38,7 +38,7 @@
     "@upstash/redis": "^1.36.2",
     "ai": "^7.0.65",
     "arctic": "^3.7.0",
-    "framer-motion": "^11.0.0",
+    "clsx": "^2.1.1",
     "jose": "^5.9.0",
     "jszip": "^3.10.1",
     "lucide-react": "^0.460.0",
@@ -47,6 +47,7 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-markdown": "^9.0.0",
+    "tailwind-merge": "^3.6.0",
     "zustand": "^5.0.0"
   },
   "devDependencies": {
