@@ -1,0 +1,244 @@
+import { createHash } from 'crypto';
+import * as jose from 'jose';
+import { getParticipantSigningSecret } from './auth';
+import type { AggregateSynthesisResult, AIProviderType } from '@/types';
+import { isKnownProviderModel } from './providerRegistry';
+
+const ISSUER = 'openinterviewer';
+const AUDIENCE = 'openinterviewer:synthesis-receipt';
+const AGGREGATE_AUDIENCE = 'openinterviewer:aggregate-synthesis-receipt';
+const RECEIPT_VERSION = 3;
+const AGGREGATE_RECEIPT_VERSION = 1;
+
+export interface SynthesisProvenance {
+  aiProvider: AIProviderType;
+  aiModel: string;
+  requestedAiModel: string;
+  routedProvider?: string;
+}
+
+type UnsignedAggregateSynthesis = Omit<AggregateSynthesisResult, '_receipt'>;
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([key]) => key !== '_receipt')
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, canonicalize(nested)])
+    );
+  }
+  return value;
+}
+
+function digest(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(canonicalize(value))).digest('hex');
+}
+
+export async function createSynthesisReceipt(options: {
+  studyId: string;
+  studyRevision: number;
+  participantSessionId: string;
+  aiProvider: AIProviderType;
+  aiModel: string;
+  requestedAiModel: string;
+  routedProvider?: string;
+  transcript: unknown;
+  participantProfile: unknown;
+  behaviorData: unknown;
+  synthesis: unknown;
+}): Promise<string> {
+  return new jose.SignJWT({
+    type: 'synthesis-receipt',
+    version: RECEIPT_VERSION,
+    studyId: options.studyId,
+    studyRevision: options.studyRevision,
+    participantSessionId: options.participantSessionId,
+    aiProvider: options.aiProvider,
+    aiModel: options.aiModel,
+    requestedAiModel: options.requestedAiModel,
+    ...(options.routedProvider ? { routedProvider: options.routedProvider } : {}),
+    dataDigest: digest({
+      transcript: options.transcript,
+      participantProfile: options.participantProfile,
+      behaviorData: options.behaviorData,
+      synthesis: options.synthesis,
+    }),
+  })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setIssuer(ISSUER)
+    .setAudience(AUDIENCE)
+    .setIssuedAt()
+    .setExpirationTime('1h')
+    .sign(getParticipantSigningSecret());
+}
+
+export async function verifySynthesisReceipt(options: {
+  receipt: string;
+  studyId: string;
+  studyRevision: number;
+  participantSessionId: string;
+  transcript: unknown;
+  participantProfile: unknown;
+  behaviorData: unknown;
+  synthesis: unknown;
+}): Promise<SynthesisProvenance | null> {
+  try {
+    const { payload } = await jose.jwtVerify(options.receipt, getParticipantSigningSecret(), {
+      algorithms: ['HS256'],
+      issuer: ISSUER,
+      audience: AUDIENCE,
+    });
+    const supportedVersion = payload.version === RECEIPT_VERSION || payload.version === 2;
+    const receiptMatches = payload.type === 'synthesis-receipt'
+      && supportedVersion
+      && payload.studyId === options.studyId
+      && payload.studyRevision === options.studyRevision
+      && payload.participantSessionId === options.participantSessionId
+      && payload.dataDigest === digest({
+        transcript: options.transcript,
+        participantProfile: options.participantProfile,
+        behaviorData: options.behaviorData,
+        synthesis: options.synthesis,
+      });
+    if (!receiptMatches) return null;
+
+    const validProvider = typeof payload.aiProvider === 'string'
+      && (payload.aiProvider === 'gemini'
+        || payload.aiProvider === 'claude'
+        || payload.aiProvider === 'openai'
+        || payload.aiProvider === 'openrouter');
+    const validBoundedModel = (value: unknown): value is string => typeof value === 'string'
+      && value.trim().length > 0
+      && value.length <= 200;
+
+    if (
+      !validProvider
+      || !validBoundedModel(payload.aiModel)
+    ) {
+      return null;
+    }
+
+    const provider = payload.aiProvider as AIProviderType;
+    if (payload.version === 2) {
+      // Version 2 predates requested/resolved/routed provenance. It was only
+      // issued by the two original adapters; map its model to both fields for
+      // one rollout window without weakening the v3 contract.
+      if (provider !== 'gemini' && provider !== 'claude') return null;
+      return {
+        aiProvider: provider,
+        requestedAiModel: payload.aiModel,
+        aiModel: payload.aiModel,
+      };
+    }
+
+    if (!validBoundedModel(payload.requestedAiModel)
+      || !isKnownProviderModel(provider, payload.requestedAiModel)) {
+      return null;
+    }
+    if (provider === 'openrouter' && !validBoundedModel(payload.routedProvider)) {
+      return null;
+    }
+    if (provider !== 'openrouter' && payload.routedProvider !== undefined) {
+      return null;
+    }
+
+    return {
+      aiProvider: provider,
+      requestedAiModel: payload.requestedAiModel,
+      aiModel: payload.aiModel,
+      ...(typeof payload.routedProvider === 'string' && payload.routedProvider.trim()
+        ? { routedProvider: payload.routedProvider }
+        : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function validBoundedText(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0 && value.length <= 200;
+}
+
+function validateAggregateProvenance(
+  value: Pick<AggregateSynthesisResult, 'aiProvider' | 'aiModel' | 'requestedAiModel' | 'routedProvider'>,
+): SynthesisProvenance | null {
+  if (!validBoundedText(value.aiModel)
+    || !validBoundedText(value.requestedAiModel)
+    || !isKnownProviderModel(value.aiProvider, value.requestedAiModel)) {
+    return null;
+  }
+  if (value.aiProvider === 'openrouter') {
+    if (!validBoundedText(value.routedProvider)) return null;
+  } else if (value.routedProvider !== undefined) {
+    return null;
+  }
+  return {
+    aiProvider: value.aiProvider,
+    aiModel: value.aiModel,
+    requestedAiModel: value.requestedAiModel,
+    ...(value.routedProvider ? { routedProvider: value.routedProvider } : {}),
+  };
+}
+
+export async function createAggregateSynthesisReceipt(
+  synthesis: UnsignedAggregateSynthesis,
+): Promise<string> {
+  const provenance = validateAggregateProvenance(synthesis);
+  if (!provenance) throw new Error('Aggregate synthesis provenance is incomplete');
+
+  return new jose.SignJWT({
+    type: 'aggregate-synthesis-receipt',
+    version: AGGREGATE_RECEIPT_VERSION,
+    studyId: synthesis.studyId,
+    studyRevision: synthesis.studyRevision,
+    ...provenance,
+    dataDigest: digest(synthesis),
+  })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setIssuer(ISSUER)
+    .setAudience(AGGREGATE_AUDIENCE)
+    .setIssuedAt()
+    .setExpirationTime('1h')
+    .sign(getParticipantSigningSecret());
+}
+
+export async function verifyAggregateSynthesisReceipt(options: {
+  receipt: string;
+  synthesis: UnsignedAggregateSynthesis;
+}): Promise<SynthesisProvenance | null> {
+  try {
+    const { payload } = await jose.jwtVerify(
+      options.receipt,
+      getParticipantSigningSecret(),
+      {
+        algorithms: ['HS256'],
+        issuer: ISSUER,
+        audience: AGGREGATE_AUDIENCE,
+      },
+    );
+    if (payload.type !== 'aggregate-synthesis-receipt'
+      || payload.version !== AGGREGATE_RECEIPT_VERSION
+      || payload.studyId !== options.synthesis.studyId
+      || payload.studyRevision !== options.synthesis.studyRevision
+      || payload.dataDigest !== digest(options.synthesis)) {
+      return null;
+    }
+
+    const provider = payload.aiProvider;
+    if (provider !== 'gemini' && provider !== 'claude'
+      && provider !== 'openai' && provider !== 'openrouter') {
+      return null;
+    }
+    if (provider !== options.synthesis.aiProvider
+      || payload.aiModel !== options.synthesis.aiModel
+      || payload.requestedAiModel !== options.synthesis.requestedAiModel
+      || payload.routedProvider !== options.synthesis.routedProvider) {
+      return null;
+    }
+    return validateAggregateProvenance(options.synthesis);
+  } catch {
+    return null;
+  }
+}

@@ -1,70 +1,125 @@
-// Claude AI Provider Implementation
-// Server-side only - uses API key from environment
-
 import Anthropic from '@anthropic-ai/sdk';
 import {
   AIProvider,
   buildInterviewSystemPrompt,
   cleanJSON,
-  defaultInterviewResponse,
-  defaultSynthesisResult,
-  defaultAggregateSynthesisResult
+  type ProviderResult,
 } from '../ai';
 import {
+  buildAggregateSynthesisPrompt,
   buildGreetingPrompt,
-  getDefaultGreeting,
   buildSynthesisPrompt,
-  buildAggregateSynthesisPrompt
 } from '../prompts';
 import {
-  StudyConfig,
-  ParticipantProfile,
-  InterviewMessage,
-  SynthesisResult,
-  BehaviorData,
-  AIInterviewResponse,
-  QuestionProgress,
-  AggregateSynthesisResult,
+  type AggregateSynthesisResult,
+  type AIInterviewResponse,
+  type BehaviorData,
+  CLAUDE_SYNTHESIS_MODEL,
   DEFAULT_CLAUDE_MODEL,
-  CLAUDE_SYNTHESIS_MODEL
+  type InterviewMessage,
+  type ParticipantProfile,
+  type QuestionProgress,
+  type StudyConfig,
+  type SynthesisResult,
 } from '@/types';
+import {
+  ProviderFailure,
+  ProviderTimeoutError,
+  logProviderFailure,
+  providerCallError,
+  withProviderDeadline,
+} from '../providerErrors';
+import {
+  validateAggregateSynthesisPayload,
+  validateFollowupStudy,
+  validateInterviewResponse,
+  validateSynthesisResult,
+  type FollowupStudy,
+} from '../providerValidation';
+import {
+  aggregateSynthesisResponseSchema,
+  followupStudyResponseSchema,
+  interviewResponseSchema,
+  synthesisResponseSchema,
+  type ProviderJsonSchema,
+} from '../providerSchemas';
+import {
+  buildFollowupPrompt,
+  execution,
+  GREETING_DEADLINE_MS,
+  INTERVIEW_DEADLINE_MS,
+  providerResult,
+  SYNTHESIS_DEADLINE_MS,
+  type AggregateSynthesisPayload,
+} from './shared';
+import { isKnownProviderModel } from '../providerRegistry';
 
-// Thinking budget for reasoning operations (16K tokens)
-const THINKING_BUDGET = 16384;
+function supportsAdaptiveThinking(model: string): boolean {
+  return /^claude-(?:sonnet|opus|fable|mythos)-5(?:$|-)/.test(model)
+    || /^claude-(?:sonnet|opus)-4-[678](?:$|-)/.test(model);
+}
+
+export function getClaudeThinkingConfig(
+  model: string,
+  enableReasoning?: boolean,
+): Anthropic.ThinkingConfigParam | undefined {
+  if (enableReasoning === false) return { type: 'disabled' };
+  if (supportsAdaptiveThinking(model)) return { type: 'adaptive', display: 'omitted' };
+  return undefined;
+}
 
 export class ClaudeProvider implements AIProvider {
-  private client: Anthropic;
-  private model: string;
+  private readonly client: Anthropic;
+  private readonly model: string;
 
   constructor(model?: string, apiKey?: string | null) {
-    // Only fall back to env var when apiKey is undefined (not explicitly provided)
-    // In hosted mode, an empty string is passed to prevent env var fallback
     const key = apiKey !== undefined ? (apiKey || undefined) : process.env.ANTHROPIC_API_KEY;
-    if (!key) {
-      throw new Error('ANTHROPIC_API_KEY is required for Claude provider');
-    }
+    if (!key) throw new Error('ANTHROPIC_API_KEY is required for Claude provider');
+
     this.client = new Anthropic({ apiKey: key });
-    // Priority: constructor param > CLAUDE_MODEL env > AI_MODEL env (legacy) > default
-    this.model = model ||
-      process.env.CLAUDE_MODEL ||
-      process.env.AI_MODEL ||
-      DEFAULT_CLAUDE_MODEL;
+    this.model = model
+      || process.env.CLAUDE_MODEL
+      || process.env.AI_MODEL
+      || DEFAULT_CLAUDE_MODEL;
+    if (!isKnownProviderModel('claude', this.model)) {
+      throw new Error(`Unsupported Claude model: ${this.model}`);
+    }
   }
 
-  // For interview responses - no thinking by default (unless explicitly enabled)
-  private getInterviewThinking(enableReasoning?: boolean): { type: 'enabled'; budget_tokens: number } | undefined {
-    if (enableReasoning === true) {
-      return { type: 'enabled', budget_tokens: THINKING_BUDGET };
+  private async createStructured(options: {
+    model: string;
+    messages: Anthropic.MessageParam[];
+    schema: ProviderJsonSchema;
+    system?: string;
+    enableReasoning?: boolean;
+    maxTokens: number;
+    deadlineMs: number;
+    operation: string;
+  }) {
+    const thinking = getClaudeThinkingConfig(options.model, options.enableReasoning);
+    try {
+      return await withProviderDeadline(options.deadlineMs, (signal) =>
+        this.client.messages.create({
+          model: options.model,
+          max_tokens: options.maxTokens,
+          messages: options.messages,
+          ...(options.system ? { system: options.system } : {}),
+          ...(thinking ? { thinking } : {}),
+          output_config: {
+            format: {
+              type: 'json_schema',
+              schema: options.schema,
+            },
+          },
+        }, {
+          signal,
+          timeout: options.deadlineMs,
+        })
+      );
+    } catch (error) {
+      if (error instanceof ProviderTimeoutError || error instanceof ProviderFailure) throw error;
+      throw providerCallError('claude', options.operation, error);
     }
-    return undefined; // Disabled by default
-  }
-
-  // For synthesis operations - thinking enabled by default (unless explicitly disabled)
-  private getSynthesisThinking(enableReasoning?: boolean): { type: 'enabled'; budget_tokens: number } | undefined {
-    if (enableReasoning === false) {
-      return undefined; // Explicitly disabled
-    }
-    return { type: 'enabled', budget_tokens: THINKING_BUDGET };
   }
 
   async generateInterviewResponse(
@@ -72,373 +127,147 @@ export class ClaudeProvider implements AIProvider {
     studyConfig: StudyConfig,
     participantProfile: ParticipantProfile | null,
     questionProgress: QuestionProgress,
-    currentContext: string
+    currentContext: string,
   ): Promise<AIInterviewResponse> {
-    const systemPrompt = buildInterviewSystemPrompt(
-      studyConfig,
-      participantProfile,
-      questionProgress,
-      currentContext
-    );
-
-    // Define tool for structured response
-    const interviewResponseTool: Anthropic.Tool = {
-      name: 'interview_response',
-      description: 'Generate a structured interview response',
-      input_schema: {
-        type: 'object',
-        properties: {
-          message: {
-            type: 'string',
-            description: 'Your response to the participant'
-          },
-          questionAddressed: {
-            type: ['number', 'null'],
-            description: '0-based index of core question substantially addressed in this exchange, or null'
-          },
-          phaseTransition: {
-            type: ['string', 'null'],
-            enum: ['background', 'core-questions', 'exploration', 'feedback', 'wrap-up', null],
-            description: 'If interview should move to a new phase, specify it'
-          },
-          profileUpdates: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                fieldId: { type: 'string' },
-                value: { type: ['string', 'null'] },
-                status: {
-                  type: 'string',
-                  enum: ['extracted', 'vague', 'refused']
-                }
-              },
-              required: ['fieldId', 'status']
-            },
-            description: 'Profile fields extracted or updated from user response'
-          },
-          shouldConclude: {
-            type: 'boolean',
-            description: 'True if interview should end (after wrap-up message)'
-          }
-        },
-        required: ['message', 'profileUpdates', 'shouldConclude']
-      }
-    };
-
-    // Convert history to Claude format
-    const messages: Anthropic.MessageParam[] = history.slice(-10).map(h => ({
-      role: h.role === 'ai' ? 'assistant' : 'user',
-      content: h.content
-    }));
-
-    try {
-      const thinkingConfig = this.getInterviewThinking(studyConfig.enableReasoning);
-      const response = await this.client.messages.create({
-        model: this.model,
-        max_tokens: thinkingConfig ? THINKING_BUDGET + 2048 : 1024,  // Increase max_tokens if thinking enabled
-        ...(thinkingConfig && { thinking: thinkingConfig }),
-        system: systemPrompt + '\n\nYou MUST use the interview_response tool to provide your response.',
-        tools: [interviewResponseTool],
-        tool_choice: { type: 'tool', name: 'interview_response' },
-        messages
-      });
-
-      // Extract tool use result
-      const toolUse = response.content.find(block => block.type === 'tool_use');
-      if (toolUse && toolUse.type === 'tool_use') {
-        const input = toolUse.input as Record<string, unknown>;
-        return {
-          message: (input.message as string) || "That's interesting. Could you tell me more?",
-          questionAddressed: (input.questionAddressed as number | null) ?? null,
-          phaseTransition: (input.phaseTransition as AIInterviewResponse['phaseTransition']) ?? null,
-          profileUpdates: (input.profileUpdates as AIInterviewResponse['profileUpdates']) || [],
-          shouldConclude: (input.shouldConclude as boolean) || false
-        };
-      }
-
-      return defaultInterviewResponse;
-    } catch (error) {
-      console.error('Claude interview response error:', error);
-      return defaultInterviewResponse;
-    }
+    const response = await this.createStructured({
+      model: this.model,
+      messages: this.toMessages(history),
+      schema: interviewResponseSchema,
+      system: buildInterviewSystemPrompt(
+        studyConfig,
+        participantProfile,
+        questionProgress,
+        currentContext,
+      ),
+      enableReasoning: studyConfig.enableReasoning,
+      maxTokens: 4096,
+      deadlineMs: INTERVIEW_DEADLINE_MS,
+      operation: 'interview',
+    });
+    return this.parseStructured(response, 'interview', validateInterviewResponse);
   }
 
   async getInterviewGreeting(studyConfig: StudyConfig): Promise<string> {
-    const prompt = buildGreetingPrompt(studyConfig);
-
+    let response;
     try {
-      const response = await this.client.messages.create({
-        model: this.model,
-        max_tokens: 300,
-        messages: [{ role: 'user', content: prompt }]
-      });
-
-      const textBlock = response.content.find(block => block.type === 'text');
-      if (textBlock && textBlock.type === 'text') {
-        return textBlock.text;
-      }
-      return getDefaultGreeting(studyConfig);
+      response = await withProviderDeadline(GREETING_DEADLINE_MS, (signal) =>
+        this.client.messages.create({
+          model: this.model,
+          max_tokens: 300,
+          messages: [{ role: 'user', content: buildGreetingPrompt(studyConfig) }],
+        }, {
+          signal,
+          timeout: GREETING_DEADLINE_MS,
+        })
+      );
     } catch (error) {
-      console.error('Claude greeting error:', error);
-      return getDefaultGreeting(studyConfig);
+      if (error instanceof ProviderTimeoutError || error instanceof ProviderFailure) throw error;
+      throw providerCallError('claude', 'greeting', error);
     }
+
+    const text = this.responseText(response);
+    if (!text) throw new ProviderFailure('invalid-response', 'Claude greeting returned no text');
+    return text;
   }
 
   async synthesizeInterview(
     history: InterviewMessage[],
     studyConfig: StudyConfig,
     behaviorData: BehaviorData,
-    participantProfile: ParticipantProfile | null
-  ): Promise<SynthesisResult> {
-    // Define tool for structured synthesis (Claude-specific)
-    const synthesisTool: Anthropic.Tool = {
-      name: 'synthesis_result',
-      description: 'Generate a structured interview synthesis',
-      input_schema: {
-        type: 'object',
-        properties: {
-          statedPreferences: {
-            type: 'array',
-            items: { type: 'string' },
-            description: 'What participant explicitly said they value/want'
-          },
-          revealedPreferences: {
-            type: 'array',
-            items: { type: 'string' },
-            description: 'What their behavior/emphasis revealed'
-          },
-          themes: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                theme: { type: 'string' },
-                evidence: { type: 'string' },
-                frequency: { type: 'number' }
-              },
-              required: ['theme', 'evidence', 'frequency']
-            }
-          },
-          contradictions: {
-            type: 'array',
-            items: { type: 'string' }
-          },
-          keyInsights: {
-            type: 'array',
-            items: { type: 'string' }
-          },
-          bottomLine: {
-            type: 'string',
-            description: 'One-sentence summary insight for the researcher'
-          }
-        },
-        required: ['statedPreferences', 'revealedPreferences', 'themes', 'keyInsights', 'bottomLine']
-      }
-    };
-
-    const prompt = buildSynthesisPrompt(history, studyConfig, behaviorData, participantProfile) +
-      '\n\nUse the synthesis_result tool to provide your analysis.';
-
-    try {
-      const thinkingConfig = this.getSynthesisThinking(studyConfig.enableReasoning);
-      const response = await this.client.messages.create({
-        model: CLAUDE_SYNTHESIS_MODEL,  // Auto-upgrade to best model for reasoning
-        max_tokens: thinkingConfig ? THINKING_BUDGET + 4096 : 2048,  // Increase for thinking
-        ...(thinkingConfig && { thinking: thinkingConfig }),
-        tools: [synthesisTool],
-        tool_choice: { type: 'tool', name: 'synthesis_result' },
-        messages: [{ role: 'user', content: prompt }]
-      });
-
-      // Extract tool use result
-      const toolUse = response.content.find(block => block.type === 'tool_use');
-      if (toolUse && toolUse.type === 'tool_use') {
-        return toolUse.input as SynthesisResult;
-      }
-
-      return defaultSynthesisResult;
-    } catch (error) {
-      console.error('Claude synthesis error:', error);
-      return defaultSynthesisResult;
-    }
+    participantProfile: ParticipantProfile | null,
+  ): Promise<ProviderResult<SynthesisResult>> {
+    const requestedModel = CLAUDE_SYNTHESIS_MODEL;
+    const response = await this.createStructured({
+      model: requestedModel,
+      messages: [{
+        role: 'user',
+        content: buildSynthesisPrompt(history, studyConfig, behaviorData, participantProfile),
+      }],
+      schema: synthesisResponseSchema,
+      enableReasoning: studyConfig.enableReasoning ?? true,
+      maxTokens: 8192,
+      deadlineMs: SYNTHESIS_DEADLINE_MS,
+      operation: 'synthesis',
+    });
+    const value = this.parseStructured(response, 'synthesis', validateSynthesisResult);
+    return providerResult(value, execution('claude', requestedModel, response.model));
   }
 
   async synthesizeAggregate(
     studyConfig: StudyConfig,
     syntheses: SynthesisResult[],
-    interviewCount: number
-  ) {
-    // Define tool for structured aggregate synthesis
-    const aggregateTool: Anthropic.Tool = {
-      name: 'aggregate_synthesis_result',
-      description: 'Generate a structured aggregate synthesis across multiple interviews',
-      input_schema: {
-        type: 'object',
-        properties: {
-          commonThemes: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                theme: { type: 'string' },
-                frequency: { type: 'number' },
-                representativeQuotes: {
-                  type: 'array',
-                  items: { type: 'string' }
-                }
-              },
-              required: ['theme', 'frequency', 'representativeQuotes']
-            },
-            description: 'Patterns appearing across multiple interviews'
-          },
-          divergentViews: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                topic: { type: 'string' },
-                viewA: { type: 'string' },
-                viewB: { type: 'string' }
-              },
-              required: ['topic', 'viewA', 'viewB']
-            },
-            description: 'Areas where participants had different perspectives'
-          },
-          keyFindings: {
-            type: 'array',
-            items: { type: 'string' },
-            description: 'Major discoveries that answer the research question'
-          },
-          researchImplications: {
-            type: 'array',
-            items: { type: 'string' },
-            description: 'What these findings mean for the field/practice'
-          },
-          bottomLine: {
-            type: 'string',
-            description: 'One paragraph summarizing key takeaways from all interviews'
-          }
-        },
-        required: ['commonThemes', 'keyFindings', 'bottomLine']
-      }
-    };
-
-    const prompt = buildAggregateSynthesisPrompt(studyConfig, syntheses, interviewCount) +
-      '\n\nUse the aggregate_synthesis_result tool to provide your analysis.';
-
-    try {
-      const thinkingConfig = this.getSynthesisThinking(studyConfig.enableReasoning);
-      const response = await this.client.messages.create({
-        model: CLAUDE_SYNTHESIS_MODEL,  // Auto-upgrade to best model for reasoning
-        max_tokens: thinkingConfig ? THINKING_BUDGET + 8192 : 4096,  // Increase for thinking
-        ...(thinkingConfig && { thinking: thinkingConfig }),
-        tools: [aggregateTool],
-        tool_choice: { type: 'tool', name: 'aggregate_synthesis_result' },
-        messages: [{ role: 'user', content: prompt }]
-      });
-
-      // Extract tool use result
-      const toolUse = response.content.find(block => block.type === 'tool_use');
-      if (toolUse && toolUse.type === 'tool_use') {
-        return toolUse.input as typeof defaultAggregateSynthesisResult;
-      }
-
-      return defaultAggregateSynthesisResult;
-    } catch (error) {
-      console.error('Claude aggregate synthesis error:', error);
-      return defaultAggregateSynthesisResult;
-    }
+    interviewCount: number,
+  ): Promise<ProviderResult<AggregateSynthesisPayload>> {
+    const requestedModel = CLAUDE_SYNTHESIS_MODEL;
+    const response = await this.createStructured({
+      model: requestedModel,
+      messages: [{
+        role: 'user',
+        content: buildAggregateSynthesisPrompt(studyConfig, syntheses, interviewCount),
+      }],
+      schema: aggregateSynthesisResponseSchema,
+      enableReasoning: studyConfig.enableReasoning ?? true,
+      maxTokens: 12_000,
+      deadlineMs: SYNTHESIS_DEADLINE_MS,
+      operation: 'aggregate-synthesis',
+    });
+    const value = this.parseStructured(
+      response,
+      'aggregate-synthesis',
+      validateAggregateSynthesisPayload,
+    );
+    return providerResult(value, execution('claude', requestedModel, response.model));
   }
 
   async generateFollowupStudy(
     parentConfig: StudyConfig,
-    synthesis: AggregateSynthesisResult
-  ): Promise<{ name: string; researchQuestion: string; coreQuestions: string[] }> {
-    // Define tool for structured follow-up generation
-    const followupTool: Anthropic.Tool = {
-      name: 'followup_study',
-      description: 'Generate a follow-up research study based on synthesis findings',
-      input_schema: {
-        type: 'object',
-        properties: {
-          name: {
-            type: 'string',
-            description: 'A concise study name (should start with "Follow-up: ")'
-          },
-          researchQuestion: {
-            type: 'string',
-            description: 'A specific, researchable question building on the findings'
-          },
-          coreQuestions: {
-            type: 'array',
-            items: { type: 'string' },
-            description: '3-5 interview questions to explore this further'
-          }
-        },
-        required: ['name', 'researchQuestion', 'coreQuestions']
-      }
-    };
+    synthesis: AggregateSynthesisResult,
+  ): Promise<ProviderResult<FollowupStudy>> {
+    const requestedModel = CLAUDE_SYNTHESIS_MODEL;
+    const response = await this.createStructured({
+      model: requestedModel,
+      messages: [{ role: 'user', content: buildFollowupPrompt(parentConfig, synthesis) }],
+      schema: followupStudyResponseSchema,
+      enableReasoning: parentConfig.enableReasoning ?? true,
+      maxTokens: 4096,
+      deadlineMs: SYNTHESIS_DEADLINE_MS,
+      operation: 'follow-up',
+    });
+    const value = this.parseStructured(response, 'follow-up', validateFollowupStudy);
+    return providerResult(value, execution('claude', requestedModel, response.model));
+  }
 
-    const prompt = `You are helping design a follow-up research study.
+  private toMessages(history: InterviewMessage[]): Anthropic.MessageParam[] {
+    if (history.length === 0) {
+      return [{ role: 'user', content: 'Please continue the interview.' }];
+    }
+    return history.map((message) => ({
+      role: message.role === 'ai' ? 'assistant' : 'user',
+      content: message.role === 'system' ? `[System event] ${message.content}` : message.content,
+    }));
+  }
 
-PARENT STUDY: "${parentConfig.name}"
-PARENT SUMMARY: ${synthesis.bottomLine}
+  private responseText(response: Anthropic.Message): string | undefined {
+    return response.content.find((block) => block.type === 'text')?.text;
+  }
 
-KEY FINDINGS:
-${synthesis.keyFindings.map((f, i) => `${i + 1}. ${f}`).join('\n')}
-
-RESEARCH IMPLICATIONS:
-${(synthesis.researchImplications || []).map((r, i) => `${i + 1}. ${r}`).join('\n') || 'None specified'}
-
-DIVERGENT VIEWS:
-${(synthesis.divergentViews || []).map(d => `- ${d.topic}: "${d.viewA}" vs "${d.viewB}"`).join('\n') || 'None identified'}
-
-Generate a follow-up study that digs deeper into gaps or tensions found.
-The follow-up should explore unanswered questions or interesting patterns from the original study.
-
-Use the followup_study tool to provide your response.`;
+  private parseStructured<T>(
+    response: Anthropic.Message,
+    operation: string,
+    validate: (input: unknown) => T,
+  ): T {
+    const text = this.responseText(response);
+    if (!text) throw new ProviderFailure('invalid-response', `Claude ${operation} returned no text`);
 
     try {
-      const thinkingConfig = this.getSynthesisThinking(parentConfig.enableReasoning);
-      const response = await this.client.messages.create({
-        model: CLAUDE_SYNTHESIS_MODEL,  // Auto-upgrade to best model for reasoning
-        max_tokens: thinkingConfig ? THINKING_BUDGET + 2048 : 1024,  // Increase for thinking
-        ...(thinkingConfig && { thinking: thinkingConfig }),
-        tools: [followupTool],
-        tool_choice: { type: 'tool', name: 'followup_study' },
-        messages: [{ role: 'user', content: prompt }]
-      });
-
-      // Extract tool use result
-      const toolUse = response.content.find(block => block.type === 'tool_use');
-      if (toolUse && toolUse.type === 'tool_use') {
-        const input = toolUse.input as { name: string; researchQuestion: string; coreQuestions: string[] };
-        return {
-          name: input.name || `Follow-up: ${parentConfig.name}`,
-          researchQuestion: input.researchQuestion || synthesis.keyFindings[0] || '',
-          coreQuestions: input.coreQuestions || []
-        };
-      }
-
-      // Fallback to deterministic generation
-      return {
-        name: `Follow-up: ${parentConfig.name}`,
-        researchQuestion: `What deeper insights emerge from exploring: ${synthesis.keyFindings[0] || 'the findings'}?`,
-        coreQuestions: synthesis.keyFindings.slice(0, 3).map(f =>
-          `Can you tell me more about your experience with: ${f}?`
-        )
-      };
+      return validate(JSON.parse(cleanJSON(text)));
     } catch (error) {
-      console.error('Claude follow-up generation error:', error);
-      // Fallback to deterministic generation
-      return {
-        name: `Follow-up: ${parentConfig.name}`,
-        researchQuestion: `What deeper insights emerge from exploring: ${synthesis.keyFindings[0] || 'the findings'}?`,
-        coreQuestions: synthesis.keyFindings.slice(0, 3).map(f =>
-          `Can you tell me more about your experience with: ${f}?`
-        )
-      };
+      logProviderFailure('claude', `${operation}-parse`, error);
+      throw new ProviderFailure(
+        'invalid-response',
+        `Claude ${operation} returned unparseable or malformed JSON`,
+        error,
+      );
     }
   }
 }

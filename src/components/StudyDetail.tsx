@@ -1,39 +1,28 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { StoredStudy, StoredInterview, AggregateSynthesisResult } from '@/types';
-import { getStudy, getStudyInterviews } from '@/services/storageService';
+import type { ParticipantLinkMetadata } from '@/lib/participantLinks';
 import {
-  Loader2,
-  ArrowLeft,
-  BookOpen,
-  Users,
-  Settings,
-  BarChart3,
-  Calendar,
-  Lock,
-  Unlock,
-  Eye,
-  Clock,
-  MessageSquare,
-  Lightbulb,
-  Sparkles,
-  AlertCircle,
-  GitBranch,
-  Link as LinkIcon,
-  ToggleLeft,
-  ToggleRight,
-  Copy,
-  Check
-} from 'lucide-react';
+  getStudy,
+  getStudyInterviews,
+  reconcileStudyOperations,
+  ResearcherStorageUnavailableError,
+  StudyOperationPendingError,
+} from '@/services/storageService';
+import { Button, Coordinate, Label, Rule, Verbatim } from '@/components/ui';
+import { useSetTrailingCrumb } from '@/components/shell/breadcrumb';
 
 interface StudyDetailProps {
   studyId: string;
 }
 
 type TabType = 'overview' | 'interviews' | 'settings';
+
+function isStudyOperationPending(response: Response, data: { code?: string }) {
+  return response.status === 409 && data.code === 'STUDY_OPERATION_PENDING';
+}
 
 const StudyDetail: React.FC<StudyDetailProps> = ({ studyId }) => {
   const router = useRouter();
@@ -48,12 +37,48 @@ const StudyDetail: React.FC<StudyDetailProps> = ({ studyId }) => {
   const [participantLink, setParticipantLink] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [generatingLink, setGeneratingLink] = useState(false);
+  const [participantLinks, setParticipantLinks] = useState<ParticipantLinkMetadata[]>([]);
+  const [linksLoadedAt, setLinksLoadedAt] = useState(0);
+  const [linksLoading, setLinksLoading] = useState(true);
+  const [linksError, setLinksError] = useState<string | null>(null);
+  const [revokingLinkId, setRevokingLinkId] = useState<string | null>(null);
+  const [operationPending, setOperationPending] = useState(false);
+  const [storageUnavailable, setStorageUnavailable] = useState<string | null>(null);
+  const [isReconciling, setIsReconciling] = useState(false);
 
-  useEffect(() => {
-    loadStudyData();
+  useSetTrailingCrumb(study?.config.name ?? null);
+
+  const loadParticipantLinks = useCallback(async () => {
+    setLinksLoading(true);
+    setLinksError(null);
+    try {
+      const response = await fetch(`/api/studies/${encodeURIComponent(studyId)}/participant-links`, {
+        cache: 'no-store',
+      });
+      const data = await response.json() as {
+        links?: ParticipantLinkMetadata[];
+        error?: string;
+        code?: string;
+      };
+      if (isStudyOperationPending(response, data)) {
+        setOperationPending(true);
+        setParticipantLinks([]);
+        return;
+      }
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to load participant links');
+      }
+      setParticipantLinks(Array.isArray(data.links) ? data.links : []);
+      setLinksLoadedAt(Date.now());
+    } catch (error) {
+      console.error('Error loading participant links:', error);
+      setLinksError(error instanceof Error ? error.message : 'Failed to load participant links');
+    } finally {
+      setLinksLoading(false);
+    }
   }, [studyId]);
 
-  const loadStudyData = async () => {
+  const loadStudyData = useCallback(async () => {
     setLoading(true);
     try {
       const [studyData, interviewData] = await Promise.all([
@@ -62,15 +87,43 @@ const StudyDetail: React.FC<StudyDetailProps> = ({ studyId }) => {
       ]);
       setStudy(studyData);
       setInterviews(interviewData);
+      setStorageUnavailable(null);
     } catch (error) {
-      console.error('Error loading study:', error);
+      if (error instanceof StudyOperationPendingError) {
+        setOperationPending(true);
+        setInterviews([]);
+      } else if (error instanceof ResearcherStorageUnavailableError) {
+        setStorageUnavailable(error.message);
+        setLinksError(error.message);
+      } else {
+        console.error('Error loading study:', error);
+      }
     } finally {
       setLoading(false);
     }
+  }, [studyId]);
+
+  const runReconciliation = async () => {
+    setIsReconciling(true);
+    const result = await reconcileStudyOperations();
+    setIsReconciling(false);
+    if (result.success && result.stillPending === 0) {
+      setOperationPending(false);
+    }
+    await loadStudyData();
+    await loadParticipantLinks();
   };
 
+  useEffect(() => {
+    void loadStudyData();
+  }, [loadStudyData]);
+
+  useEffect(() => {
+    void loadParticipantLinks();
+  }, [loadParticipantLinks]);
+
   const handleToggleLinksEnabled = async () => {
-    if (!study) return;
+    if (!study || operationPending) return;
 
     const newLinksEnabled = !(study.config.linksEnabled ?? true);
     setIsTogglingLinks(true);
@@ -79,16 +132,16 @@ const StudyDetail: React.FC<StudyDetailProps> = ({ studyId }) => {
       const response = await fetch(`/api/studies/${studyId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          config: {
-            ...study.config,
-            linksEnabled: newLinksEnabled
-          }
-        })
+        body: JSON.stringify({ linksEnabled: newLinksEnabled })
       });
 
+      const data = await response.json().catch(() => ({})) as { code?: string; error?: string };
+      if (isStudyOperationPending(response, data)) {
+        setOperationPending(true);
+        return;
+      }
       if (!response.ok) {
-        throw new Error('Failed to update study');
+        throw new Error(data.error || 'Failed to update study');
       }
 
       // Update local state
@@ -108,7 +161,7 @@ const StudyDetail: React.FC<StudyDetailProps> = ({ studyId }) => {
   };
 
   const handleGenerateLink = async () => {
-    if (!study) return;
+    if (!study || operationPending) return;
 
     setGeneratingLink(true);
     try {
@@ -118,14 +171,17 @@ const StudyDetail: React.FC<StudyDetailProps> = ({ studyId }) => {
         body: JSON.stringify({ studyConfig: study.config })
       });
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to generate link');
+      const data = await response.json().catch(() => ({})) as { error?: string; code?: string; url?: string };
+      if (isStudyOperationPending(response, data)) {
+        setOperationPending(true);
+        return;
       }
-
-      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to generate link');
+      }
       if (data.url) {
         setParticipantLink(data.url);
+        await loadParticipantLinks();
       }
     } catch (error) {
       console.error('Error generating link:', error);
@@ -143,7 +199,38 @@ const StudyDetail: React.FC<StudyDetailProps> = ({ studyId }) => {
     }
   };
 
+  const handleRevokeLink = async (link: ParticipantLinkMetadata) => {
+    if (operationPending || link.revokedAt !== null) return;
+    if (!window.confirm('Revoke this participant link? Anyone using it will lose access immediately.')) {
+      return;
+    }
+
+    setRevokingLinkId(link.id);
+    try {
+      const response = await fetch(`/api/studies/${encodeURIComponent(studyId)}/participant-links`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ linkId: link.id }),
+      });
+      const data = await response.json() as { error?: string; code?: string };
+      if (isStudyOperationPending(response, data)) {
+        setOperationPending(true);
+        return;
+      }
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to revoke participant link');
+      }
+      await loadParticipantLinks();
+    } catch (error) {
+      console.error('Error revoking participant link:', error);
+      alert(error instanceof Error ? error.message : 'Failed to revoke participant link');
+    } finally {
+      setRevokingLinkId(null);
+    }
+  };
+
   const handleGenerateAggregateSynthesis = async () => {
+    if (operationPending) return;
     if (interviews.length < 2) {
       alert('Need at least 2 interviews to generate aggregate synthesis');
       return;
@@ -157,13 +244,19 @@ const StudyDetail: React.FC<StudyDetailProps> = ({ studyId }) => {
         body: JSON.stringify({ studyId })
       });
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to generate synthesis');
+      const data = await response.json().catch(() => ({})) as {
+        error?: string;
+        code?: string;
+        synthesis?: AggregateSynthesisResult;
+      };
+      if (isStudyOperationPending(response, data)) {
+        setOperationPending(true);
+        return;
       }
-
-      const data = await response.json();
-      setAggregateSynthesis(data.synthesis);
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to generate synthesis');
+      }
+      if (data.synthesis) setAggregateSynthesis(data.synthesis);
     } catch (error) {
       console.error('Error generating aggregate synthesis:', error);
       alert(error instanceof Error ? error.message : 'Failed to generate synthesis');
@@ -173,7 +266,7 @@ const StudyDetail: React.FC<StudyDetailProps> = ({ studyId }) => {
   };
 
   const handleGenerateFollowup = async () => {
-    if (!aggregateSynthesis) {
+    if (operationPending || !aggregateSynthesis) {
       alert('Generate aggregate analysis first');
       return;
     }
@@ -186,12 +279,18 @@ const StudyDetail: React.FC<StudyDetailProps> = ({ studyId }) => {
         body: JSON.stringify({ synthesis: aggregateSynthesis })
       });
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to generate follow-up study');
+      const data = await response.json().catch(() => ({})) as {
+        error?: string;
+        code?: string;
+        followUpConfig?: unknown;
+      };
+      if (isStudyOperationPending(response, data)) {
+        setOperationPending(true);
+        return;
       }
-
-      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to generate follow-up study');
+      }
 
       // Store prefill config in sessionStorage and navigate to setup
       sessionStorage.setItem('prefillStudyConfig', JSON.stringify(data.followUpConfig));
@@ -219,441 +318,587 @@ const StudyDetail: React.FC<StudyDetailProps> = ({ studyId }) => {
     return `${minutes} min`;
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-stone-900 flex items-center justify-center">
-        <Loader2 size={48} className="animate-spin text-stone-400" />
-      </div>
+  const handleTbodyKeyDown = (event: React.KeyboardEvent<HTMLTableSectionElement>) => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    const buttons = Array.from(
+      event.currentTarget.querySelectorAll<HTMLButtonElement>('[data-row-primary]')
     );
+    const currentIndex = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    if (currentIndex === -1) return;
+    const nextIndex = event.key === 'ArrowDown' ? currentIndex + 1 : currentIndex - 1;
+    if (nextIndex < 0 || nextIndex >= buttons.length) return;
+    event.preventDefault();
+    buttons[nextIndex]?.focus();
+  };
+
+  if (loading) {
+    return <p className="py-16 font-sans text-[15px] text-ink-500">Loading…</p>;
   }
 
   if (!study) {
     return (
-      <div className="min-h-screen bg-stone-900 flex items-center justify-center">
-        <div className="text-center">
-          <AlertCircle size={48} className="text-stone-500 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-white mb-2">Study Not Found</h2>
-          <p className="text-stone-400 mb-4">The study you're looking for doesn't exist.</p>
-          <button
-            onClick={() => router.push('/studies')}
-            className="px-4 py-2 bg-stone-700 hover:bg-stone-600 text-white rounded-xl"
-          >
-            Back to Studies
-          </button>
-        </div>
+      <div className="max-w-measure">
+        {operationPending ? (
+          <>
+            <h2 className="font-sans text-[18px] font-semibold text-ink-900">Study change pending</h2>
+            <p className="mt-2 font-sans text-[15px] text-ink-700">A study operation is already in progress.</p>
+            <Button
+              type="button"
+              variant="quiet"
+              onClick={() => void runReconciliation()}
+              disabled={isReconciling}
+              className="mt-4"
+            >
+              {isReconciling ? 'Reconciling…' : 'Reconcile'}
+            </Button>
+          </>
+        ) : storageUnavailable ? (
+          <>
+            <h2 className="font-sans text-[18px] font-semibold text-ink-900">Workspace unavailable</h2>
+            <p className="mt-2 font-sans text-[15px] text-ink-700">{storageUnavailable}</p>
+          </>
+        ) : (
+          <>
+            <h2 className="font-sans text-[18px] font-semibold text-ink-900">Study Not Found</h2>
+            <p className="mt-2 font-sans text-[15px] text-ink-700">The study you&apos;re looking for doesn&apos;t exist.</p>
+          </>
+        )}
+        <Button variant="quiet" onClick={() => router.push('/studies')} className="mt-3">
+          Back to Studies
+        </Button>
       </div>
     );
   }
 
-  const tabs: { id: TabType; label: string; icon: React.ReactNode }[] = [
-    { id: 'overview', label: 'Overview', icon: <BarChart3 size={16} /> },
-    { id: 'interviews', label: 'Interviews', icon: <Users size={16} /> },
-    { id: 'settings', label: 'Settings', icon: <Settings size={16} /> }
+  const tabs: { id: TabType; label: string }[] = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'interviews', label: 'Interviews' },
+    { id: 'settings', label: 'Study settings' }
   ];
 
   return (
-    <div className="min-h-screen bg-stone-900 p-8">
-      <div className="max-w-5xl mx-auto">
-        {/* Header */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mb-8"
-        >
-          <button
-            onClick={() => router.push('/studies')}
-            className="text-stone-400 hover:text-stone-300 flex items-center gap-2 mb-4"
-          >
-            <ArrowLeft size={16} />
-            Back to Studies
-          </button>
+    <div>
+      {/* Header */}
+      <div className="mb-8">
+        <h1 className="break-words font-sans text-[24px] font-semibold leading-[32px] text-ink-900">
+          {study.config.name}
+        </h1>
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+          <span className="font-sans text-[13px] text-ink-500">{study.interviewCount} interviews</span>
+          <Coordinate>Created {formatDate(study.createdAt)}</Coordinate>
+          <span className={`font-sans text-[13px] ${study.isLocked ? 'text-ink-500' : 'text-success'}`}>
+            {study.isLocked ? 'Locked' : 'Editable'}
+          </span>
+        </div>
+      </div>
 
-          <div className="flex items-start justify-between">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-xl bg-stone-700 flex items-center justify-center">
-                <BookOpen className="text-stone-300" size={24} />
-              </div>
-              <div>
-                <h1 className="text-3xl font-bold text-white">{study.config.name}</h1>
-                <div className="flex items-center gap-3 mt-1 text-sm text-stone-400">
-                  <span className="flex items-center gap-1">
-                    <Users size={14} />
-                    {study.interviewCount} interviews
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Calendar size={14} />
-                    Created {formatDate(study.createdAt)}
-                  </span>
-                  <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs ${
-                    study.isLocked
-                      ? 'bg-stone-700 text-stone-400'
-                      : 'bg-green-900/50 text-green-400'
-                  }`}>
-                    {study.isLocked ? <Lock size={10} /> : <Unlock size={10} />}
-                    {study.isLocked ? 'Locked' : 'Editable'}
-                  </span>
-                </div>
-              </div>
+      {operationPending && (
+        <div role="status" className="mb-6 border-l-2 border-error bg-paper-2 px-4 py-3">
+          <Label>Pending reconciliation</Label>
+          <p className="mt-1 text-[13px] text-ink-700">A study operation is already in progress.</p>
+          <Button
+            type="button"
+            variant="quiet"
+            onClick={() => void runReconciliation()}
+            disabled={isReconciling}
+            className="mt-2"
+          >
+            Reconcile
+          </Button>
+        </div>
+      )}
+
+      {/* Tabs */}
+      <div className="mb-8 grid grid-cols-3 border-b border-ink-300" role="tablist" aria-label="Study sections">
+        {tabs.map((tab) => (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`min-h-11 border-b-2 px-2 py-3 text-center font-sans text-[15px] font-medium ${
+              activeTab === tab.id
+                ? 'border-action text-action'
+                : 'border-transparent text-ink-500 hover:text-ink-900'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab Content */}
+      {activeTab === 'overview' && (
+        <div>
+          <Label>Research Question</Label>
+          <p className="mt-2 max-w-measure font-sans text-[17px] leading-[28px] text-ink-900">
+            {study.config.researchQuestion}
+          </p>
+          <Rule className="my-8" />
+
+          <div
+            role="group"
+            aria-label="Study summary"
+            className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4"
+          >
+            <div className="border-t border-ink-300 py-4">
+              <Coordinate className="block text-[28px] leading-[36px] text-ink-900">
+                {study.interviewCount}
+              </Coordinate>
+              <Label className="mt-1 block">Interviews</Label>
+            </div>
+            <div className="border-t border-ink-300 py-4">
+              <Coordinate className="block text-[28px] leading-[36px] text-ink-900">
+                {study.config.coreQuestions.length}
+              </Coordinate>
+              <Label className="mt-1 block">Core Questions</Label>
+            </div>
+            <div className="border-t border-ink-300 py-4">
+              <Coordinate className="block text-[28px] leading-[36px] text-ink-900">
+                {study.config.topicAreas.length}
+              </Coordinate>
+              <Label className="mt-1 block">Topic Areas</Label>
             </div>
           </div>
-        </motion.div>
 
-        {/* Tabs */}
-        <div className="flex gap-2 mb-6 border-b border-stone-700">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`px-4 py-3 flex items-center gap-2 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === tab.id
-                  ? 'border-stone-400 text-white'
-                  : 'border-transparent text-stone-500 hover:text-stone-400'
-              }`}
-            >
-              {tab.icon}
-              {tab.label}
-            </button>
-          ))}
-        </div>
+          <Rule className="my-8" />
 
-        {/* Tab Content */}
-        <motion.div
-          key={activeTab}
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.2 }}
-        >
-          {activeTab === 'overview' && (
-            <div className="space-y-6">
-              {/* Research Question */}
-              <div className="bg-stone-800/50 rounded-xl border border-stone-700 p-6">
-                <h3 className="font-semibold text-white mb-2 flex items-center gap-2">
-                  <Sparkles size={16} className="text-stone-400" />
-                  Research Question
-                </h3>
-                <p className="text-stone-300">{study.config.researchQuestion}</p>
-              </div>
-
-              {/* Stats Summary */}
-              <div className="grid grid-cols-3 gap-4">
-                <div className="bg-stone-800/50 rounded-xl border border-stone-700 p-4 text-center">
-                  <div className="text-3xl font-bold text-white">{study.interviewCount}</div>
-                  <div className="text-sm text-stone-400">Interviews</div>
-                </div>
-                <div className="bg-stone-800/50 rounded-xl border border-stone-700 p-4 text-center">
-                  <div className="text-3xl font-bold text-white">{study.config.coreQuestions.length}</div>
-                  <div className="text-sm text-stone-400">Core Questions</div>
-                </div>
-                <div className="bg-stone-800/50 rounded-xl border border-stone-700 p-4 text-center">
-                  <div className="text-3xl font-bold text-white">{study.config.topicAreas.length}</div>
-                  <div className="text-sm text-stone-400">Topic Areas</div>
-                </div>
-              </div>
-
-              {/* Aggregate Synthesis */}
-              <div className="bg-stone-800/50 rounded-xl border border-stone-700 p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-semibold text-white flex items-center gap-2">
-                    <BarChart3 size={16} className="text-stone-400" />
-                    Aggregate Analysis
-                  </h3>
-                  <button
-                    onClick={handleGenerateAggregateSynthesis}
-                    disabled={isGeneratingAggregate || interviews.length < 2}
-                    className="px-4 py-2 text-sm bg-stone-700 hover:bg-stone-600 text-stone-300 rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isGeneratingAggregate ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : (
-                      <Sparkles size={14} />
-                    )}
-                    {isGeneratingAggregate ? 'Analyzing...' : 'Analyze All Interviews'}
-                  </button>
-                </div>
-
-                {interviews.length < 2 ? (
-                  <p className="text-stone-500 text-sm">
-                    Need at least 2 interviews to generate aggregate analysis.
-                  </p>
-                ) : aggregateSynthesis ? (
-                  <div className="space-y-4">
-                    <div>
-                      <h4 className="text-sm font-medium text-stone-400 mb-2">Key Findings</h4>
-                      <ul className="space-y-1">
-                        {aggregateSynthesis.keyFindings.map((finding, i) => (
-                          <li key={i} className="text-stone-300 text-sm flex items-start gap-2">
-                            <span className="text-stone-500">•</span>
-                            {finding}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                    <div>
-                      <h4 className="text-sm font-medium text-stone-400 mb-2">Bottom Line</h4>
-                      <p className="text-stone-300 text-sm bg-stone-800 rounded-lg p-3">
-                        {aggregateSynthesis.bottomLine}
-                      </p>
-                    </div>
-
-                    {/* Generate Follow-up Study Button */}
-                    <div className="pt-4 border-t border-stone-700">
-                      <button
-                        onClick={handleGenerateFollowup}
-                        disabled={isGeneratingFollowup}
-                        className="px-4 py-2 text-sm bg-stone-600 hover:bg-stone-500 text-white rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {isGeneratingFollowup ? (
-                          <Loader2 size={14} className="animate-spin" />
-                        ) : (
-                          <GitBranch size={14} />
-                        )}
-                        {isGeneratingFollowup ? 'Generating...' : 'Create Follow-up Study'}
-                      </button>
-                      <p className="text-xs text-stone-500 mt-2">
-                        Generate a new study based on gaps and patterns found in this analysis.
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-stone-500 text-sm">
-                    Click "Analyze All Interviews" to generate cross-interview insights.
-                  </p>
-                )}
-              </div>
+          <section>
+            <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <h3 className="font-sans text-[15px] font-semibold text-ink-900">Aggregate Analysis</h3>
+              <Button
+                variant="primary"
+                onClick={handleGenerateAggregateSynthesis}
+                disabled={operationPending || isGeneratingAggregate || interviews.length < 2}
+                className="w-full sm:w-auto"
+              >
+                {isGeneratingAggregate ? 'Analyzing...' : 'Analyze All Interviews'}
+              </Button>
             </div>
-          )}
 
-          {activeTab === 'interviews' && (
-            <div className="space-y-4">
-              {interviews.length === 0 ? (
-                <div className="bg-stone-800/50 rounded-xl border border-stone-700 p-12 text-center">
-                  <Users size={32} className="text-stone-500 mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold text-white mb-2">No Interviews Yet</h3>
-                  <p className="text-stone-400 text-sm">
-                    Share the participant link to start collecting interviews.
-                  </p>
-                </div>
-              ) : (
-                interviews.map((interview, index) => (
-                  <motion.div
-                    key={interview.id}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: index * 0.05 }}
-                    className="bg-stone-800/50 rounded-xl border border-stone-700 p-6 hover:border-stone-600 transition-colors cursor-pointer"
-                    onClick={() => router.push(`/dashboard/interview/${interview.id}`)}
+            {interviews.length < 2 ? (
+              <p className="mt-3 text-[13px] text-ink-500">
+                Need at least 2 interviews to generate aggregate analysis.
+              </p>
+            ) : aggregateSynthesis ? (
+              <div className="mt-6 space-y-6">
+                <section>
+                  <Label className="block">Bottom line</Label>
+                  <Verbatim
+                    as="p"
+                    className="mt-3 max-w-measure text-[24px] font-normal leading-[36px] text-ink-900 md:text-[28px] md:leading-[40px]"
                   >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        {/* Participant info */}
-                        {interview.participantProfile && interview.participantProfile.fields.length > 0 && (
-                          <div className="text-sm text-stone-300 mb-3">
-                            {interview.participantProfile.fields
-                              .filter(f => f.status === 'extracted' && f.value)
-                              .slice(0, 3)
-                              .map(f => f.value)
-                              .join(' • ')}
-                          </div>
-                        )}
+                    {aggregateSynthesis.bottomLine}
+                  </Verbatim>
+                </section>
+                <Rule className="mt-8" />
 
-                        {/* Key insight */}
-                        {interview.synthesis?.bottomLine && (
-                          <div className="flex items-start gap-2 text-sm text-stone-300 bg-stone-800 rounded-lg p-3 mb-3">
-                            <Lightbulb size={16} className="text-stone-400 flex-shrink-0 mt-0.5" />
-                            <span className="line-clamp-2">{interview.synthesis.bottomLine}</span>
-                          </div>
-                        )}
-
-                        {/* Stats */}
-                        <div className="flex items-center gap-4 text-xs text-stone-500">
-                          <div className="flex items-center gap-1">
-                            <Clock size={12} />
-                            {formatDuration(interview.createdAt, interview.completedAt)}
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <MessageSquare size={12} />
-                            {interview.transcript.length} messages
-                          </div>
-                          <div>
-                            {formatDate(interview.createdAt)}
-                          </div>
-                        </div>
-                      </div>
-
-                      <button
-                        className="p-2 text-stone-400 hover:text-stone-300 transition-colors"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          router.push(`/dashboard/interview/${interview.id}`);
-                        }}
+                <section>
+                  <h4 className="font-sans text-[15px] font-semibold text-ink-900">Key Findings</h4>
+                  <ul className="mt-3">
+                    {aggregateSynthesis.keyFindings.map((finding, i) => (
+                      <li
+                        key={i}
+                        className="max-w-measure border-t border-ink-300 py-2 font-sans text-[15px] leading-[24px] text-ink-700"
                       >
-                        <Eye size={20} />
-                      </button>
-                    </div>
-                  </motion.div>
-                ))
-              )}
-            </div>
-          )}
-
-          {activeTab === 'settings' && (
-            <div className="space-y-6">
-              {study.interviewCount > 0 && (
-                <div className="bg-amber-900/30 border border-amber-700/50 rounded-xl p-4 flex items-start gap-3">
-                  <AlertCircle size={20} className="text-amber-400 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <h4 className="font-medium text-white">
-                      {study.interviewCount} interview{study.interviewCount > 1 ? 's' : ''} collected
-                    </h4>
-                    <p className="text-sm text-stone-400">
-                      This study has collected data. Editing is allowed but may affect consistency with existing responses.
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* Study Config Display */}
-              <div className="bg-stone-800/50 rounded-xl border border-stone-700 p-6 space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-stone-400 mb-1">Study Name</label>
-                  <p className="text-stone-200">{study.config.name}</p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-stone-400 mb-1">Description</label>
-                  <p className="text-stone-200">{study.config.description || 'No description'}</p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-stone-400 mb-1">Research Question</label>
-                  <p className="text-stone-200">{study.config.researchQuestion}</p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-stone-400 mb-1">
-                    Core Questions ({study.config.coreQuestions.length})
-                  </label>
-                  <ul className="space-y-2">
-                    {study.config.coreQuestions.map((q, i) => (
-                      <li key={i} className="text-stone-300 text-sm pl-4 border-l-2 border-stone-700">
-                        {q}
+                        {finding}
                       </li>
                     ))}
                   </ul>
-                </div>
+                </section>
 
-                <div>
-                  <label className="block text-sm font-medium text-stone-400 mb-1">
-                    Topic Areas ({study.config.topicAreas.length})
-                  </label>
-                  <div className="flex flex-wrap gap-2">
-                    {study.config.topicAreas.map((topic, i) => (
-                      <span key={i} className="px-3 py-1 bg-stone-700 text-stone-300 text-sm rounded-full">
-                        {topic}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-stone-400 mb-1">AI Interview Style</label>
-                  <p className="text-stone-200 capitalize">{study.config.aiBehavior}</p>
-                </div>
-              </div>
-
-              {/* Link Management */}
-              <div className="bg-stone-800/50 rounded-xl border border-stone-700 p-6 space-y-4">
-                <h3 className="font-semibold text-stone-100 flex items-center gap-2">
-                  <LinkIcon size={18} className="text-stone-400" />
-                  Link Management
-                </h3>
-
-                <div className="flex items-center justify-between p-4 bg-stone-900/50 rounded-xl">
-                  <div>
-                    <div className="font-medium text-stone-200">Participant Access</div>
-                    <p className="text-sm text-stone-400">
-                      {(study.config.linksEnabled ?? true)
-                        ? 'Access enabled - participants can use the link below'
-                        : 'Access disabled - the same link will show an error until re-enabled'}
-                    </p>
-                  </div>
-                  <button
-                    onClick={handleToggleLinksEnabled}
-                    disabled={isTogglingLinks}
-                    className={`w-14 h-7 rounded-full transition-colors flex items-center px-1 ${
-                      (study.config.linksEnabled ?? true)
-                        ? 'bg-green-600'
-                        : 'bg-stone-600'
-                    } ${isTogglingLinks ? 'opacity-50' : ''}`}
-                  >
-                    <div className={`w-5 h-5 bg-white rounded-full transition-transform ${
-                      (study.config.linksEnabled ?? true) ? 'translate-x-7' : 'translate-x-0'
-                    }`} />
-                  </button>
-                </div>
-
-                {study.config.linkExpiration && study.config.linkExpiration !== 'never' && (
-                  <div className="flex items-center gap-2 text-sm text-stone-400">
-                    <Clock size={14} />
-                    <span>Links expire: {study.config.linkExpiration === '7days' ? '7 days' : study.config.linkExpiration === '30days' ? '30 days' : '90 days'} after generation</span>
-                  </div>
+                {aggregateSynthesis.commonThemes.length > 0 && (
+                  <section>
+                    <h4 className="font-sans text-[15px] font-semibold text-ink-900">Common Themes</h4>
+                    <ul className="mt-3">
+                      {aggregateSynthesis.commonThemes.map((theme, i) => (
+                        <li key={i} className="border-t border-ink-300 py-4">
+                          <p className="font-sans text-[15px] font-medium text-ink-900">{theme.theme}</p>
+                          {theme.representativeQuotes.map((quote, j) => (
+                            <Verbatim
+                              key={j}
+                              as="p"
+                              className="mt-2 max-w-measure border-l border-ink-300 pl-4 text-[17px] leading-[28px] text-ink-700"
+                            >
+                              {quote}
+                            </Verbatim>
+                          ))}
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
                 )}
 
-                {!(study.config.linksEnabled ?? true) && (
-                  <div className="text-xs text-amber-400 bg-amber-900/30 p-3 rounded-lg">
-                    Warning: All participant links are currently disabled. Participants trying to access the study will see an error message.
-                  </div>
-                )}
-              </div>
-
-              {/* Participant Link Generator */}
-              <div className="bg-stone-800/50 rounded-xl border border-stone-700 p-6">
-                <h3 className="text-lg font-medium text-white mb-4 flex items-center gap-2">
-                  <LinkIcon size={18} />
-                  Participant Link
-                </h3>
-
-                <div className="space-y-4">
-                  {/* Generate Button */}
-                  <button
-                    onClick={handleGenerateLink}
-                    disabled={generatingLink || !(study.config.linksEnabled ?? true)}
-                    className="px-4 py-2 bg-stone-600 hover:bg-stone-500 text-white rounded-lg disabled:opacity-50 flex items-center gap-2"
+                <div className="border-t border-ink-300 pt-4">
+                  <Button
+                    variant="quiet"
+                    onClick={handleGenerateFollowup}
+                    disabled={operationPending || isGeneratingFollowup}
                   >
-                    {generatingLink ? <Loader2 size={16} className="animate-spin" /> : <LinkIcon size={16} />}
-                    Generate New Link
-                  </button>
-
-                  {/* Link Display (when generated) */}
-                  {participantLink && (
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={participantLink}
-                        readOnly
-                        className="flex-1 bg-stone-900 border border-stone-600 rounded-lg px-3 py-2 text-stone-300 text-sm font-mono"
-                      />
-                      <button
-                        onClick={handleCopyLink}
-                        className="px-3 py-2 bg-stone-700 hover:bg-stone-600 text-stone-300 rounded-lg flex items-center gap-1"
-                      >
-                        {copied ? <Check size={16} className="text-green-400" /> : <Copy size={16} />}
-                        {copied ? 'Copied!' : 'Copy'}
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Explanation */}
-                  <p className="text-xs text-stone-500">
-                    Each click generates a new unique link. All links share the same enable/disable toggle above.
-                    {!(study.config.linksEnabled ?? true) && ' Links are currently disabled - enable access above first.'}
+                    {isGeneratingFollowup ? 'Generating...' : 'Create Follow-up Study'}
+                  </Button>
+                  <p className="mt-2 text-[13px] text-ink-500">
+                    Generate a new study based on gaps and patterns found in this analysis.
                   </p>
                 </div>
+
+                <footer className="mt-10 border-t border-ink-300 pt-4">
+                  <Coordinate className="block">
+                    {`Synthesized by ${aggregateSynthesis.aiModel} · study rev ${aggregateSynthesis.studyRevision} · ${formatDate(
+                      aggregateSynthesis.generatedAt
+                    )} · receipt ${
+                      aggregateSynthesis._receipt ? aggregateSynthesis._receipt.slice(0, 12) : 'unsigned'
+                    }`}
+                  </Coordinate>
+                </footer>
               </div>
+            ) : (
+              <p className="mt-3 text-[13px] text-ink-500">
+                Click &quot;Analyze All Interviews&quot; to generate cross-interview insights.
+              </p>
+            )}
+          </section>
+        </div>
+      )}
+
+      {activeTab === 'interviews' && (
+        interviews.length === 0 ? (
+          <div className="max-w-measure">
+            <h3 className="font-sans text-[18px] font-semibold text-ink-900">No Interviews Yet</h3>
+            <p className="mt-2 font-sans text-[15px] text-ink-700">
+              Share the participant link to start collecting interviews.
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-left">
+              <thead>
+                <tr className="border-b border-ink-300">
+                  <th scope="col" className="px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500">
+                    ID
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500">
+                    Participant
+                  </th>
+                  <th
+                    scope="col"
+                    className="hidden px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500 sm:table-cell"
+                  >
+                    Started
+                  </th>
+                  <th
+                    scope="col"
+                    className="hidden px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500 md:table-cell"
+                  >
+                    Duration
+                  </th>
+                  <th
+                    scope="col"
+                    className="hidden px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500 md:table-cell"
+                  >
+                    Turns
+                  </th>
+                </tr>
+              </thead>
+              <tbody onKeyDown={handleTbodyKeyDown}>
+                {interviews.map((interview, index) => {
+                  const extractedFields = (interview.participantProfile?.fields ?? [])
+                    .filter(f => f.status === 'extracted' && f.value)
+                    .slice(0, 3)
+                    .map(f => f.value)
+                    .join(' • ');
+                  return (
+                    <tr
+                      key={interview.id}
+                      className="border-b border-ink-200 hover:bg-paper-1"
+                      onClick={() => router.push(`/dashboard/interview/${interview.id}?studyId=${encodeURIComponent(studyId)}`)}
+                    >
+                      <td className="px-3 py-3 align-top text-[13px] text-ink-700">
+                        <Coordinate>{interview.id.slice(0, 8)}</Coordinate>
+                      </td>
+                      <td className="px-3 py-3 align-top text-[13px] text-ink-700">
+                        <button
+                          type="button"
+                          data-row-primary
+                          aria-label={`View interview ${index + 1}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            router.push(`/dashboard/interview/${interview.id}?studyId=${encodeURIComponent(studyId)}`);
+                          }}
+                          className="text-left font-sans text-[14px] font-medium text-ink-900 underline-offset-2 hover:text-action hover:underline"
+                        >
+                          {extractedFields || `Interview ${index + 1}`}
+                        </button>
+                        {interview.synthesis?.bottomLine && (
+                          <p className="line-clamp-1 text-[13px] text-ink-500">{interview.synthesis.bottomLine}</p>
+                        )}
+                      </td>
+                      <td className="hidden px-3 py-3 align-top text-[13px] text-ink-700 sm:table-cell">
+                        <Coordinate>{formatDate(interview.createdAt)}</Coordinate>
+                      </td>
+                      <td className="hidden px-3 py-3 align-top text-[13px] text-ink-700 md:table-cell">
+                        <Coordinate>{formatDuration(interview.createdAt, interview.completedAt)}</Coordinate>
+                      </td>
+                      <td className="hidden px-3 py-3 align-top text-[13px] text-ink-700 md:table-cell">
+                        <Coordinate>{interview.transcript.length}</Coordinate>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
+
+      {activeTab === 'settings' && (
+        <div className="space-y-8">
+          {study.interviewCount > 0 && (
+            <div className="border-l-2 border-ink-500 bg-paper-2 px-4 py-3">
+              <Label>{`${study.interviewCount} interview${study.interviewCount > 1 ? 's' : ''} collected`}</Label>
+              <p className="mt-1 text-[13px] text-ink-700">
+                This study has collected data. Editing is allowed but may affect consistency with existing responses.
+              </p>
             </div>
           )}
-        </motion.div>
-      </div>
+
+          {/* Study Config Display */}
+          <dl className="divide-y divide-ink-300 border-t border-ink-300">
+            <div className="grid grid-cols-1 gap-1 py-4 md:grid-cols-[12rem_1fr] md:gap-6">
+              <dt>
+                <Label>Study Name</Label>
+              </dt>
+              <dd className="font-sans text-[15px] leading-[24px] text-ink-900">{study.config.name}</dd>
+            </div>
+
+            <div className="grid grid-cols-1 gap-1 py-4 md:grid-cols-[12rem_1fr] md:gap-6">
+              <dt>
+                <Label>Description</Label>
+              </dt>
+              <dd className="font-sans text-[15px] leading-[24px] text-ink-900">
+                {study.config.description || 'No description'}
+              </dd>
+            </div>
+
+            <div className="grid grid-cols-1 gap-1 py-4 md:grid-cols-[12rem_1fr] md:gap-6">
+              <dt>
+                <Label>Research Question</Label>
+              </dt>
+              <dd className="font-sans text-[15px] leading-[24px] text-ink-900">{study.config.researchQuestion}</dd>
+            </div>
+
+            <div className="grid grid-cols-1 gap-1 py-4 md:grid-cols-[12rem_1fr] md:gap-6">
+              <dt>
+                <Label>{`Core Questions (${study.config.coreQuestions.length})`}</Label>
+              </dt>
+              <dd className="font-sans text-[15px] leading-[24px] text-ink-900">
+                <ul>
+                  {study.config.coreQuestions.map((q, i) => (
+                    <li key={i} className="border-l-2 border-ink-300 pl-4">
+                      {q}
+                    </li>
+                  ))}
+                </ul>
+              </dd>
+            </div>
+
+            <div className="grid grid-cols-1 gap-1 py-4 md:grid-cols-[12rem_1fr] md:gap-6">
+              <dt>
+                <Label>{`Topic Areas (${study.config.topicAreas.length})`}</Label>
+              </dt>
+              <dd className="font-sans text-[15px] leading-[24px] text-ink-900">
+                <ul>
+                  {study.config.topicAreas.map((topic, i) => (
+                    <li key={i} className="border-t border-ink-300 py-1.5 text-[15px] text-ink-700">
+                      {topic}
+                    </li>
+                  ))}
+                </ul>
+              </dd>
+            </div>
+
+            <div className="grid grid-cols-1 gap-1 py-4 md:grid-cols-[12rem_1fr] md:gap-6">
+              <dt>
+                <Label>AI Interview Style</Label>
+              </dt>
+              <dd className="font-sans text-[15px] leading-[24px] capitalize text-ink-900">{study.config.aiBehavior}</dd>
+            </div>
+          </dl>
+
+          {/* Link Management */}
+          <div>
+            <h3 className="font-sans text-[15px] font-semibold text-ink-900">Link Management</h3>
+
+            <div className="mt-4 flex flex-col items-start gap-3 border-y border-ink-300 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="font-sans text-[15px] font-medium text-ink-900">Participant Access</p>
+                <p id="participant-access-status" className="text-[13px] text-ink-500">
+                  {(study.config.linksEnabled ?? true)
+                    ? 'Access enabled - participants can use the link below'
+                    : 'Access disabled - the same link will show an error until re-enabled'}
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-label="Participant access"
+                aria-checked={study.config.linksEnabled ?? true}
+                aria-describedby="participant-access-status"
+                onClick={handleToggleLinksEnabled}
+                disabled={operationPending || isTogglingLinks}
+                className="min-h-11 shrink-0 disabled:opacity-50"
+              >
+                <Coordinate
+                  className={`rounded border px-2 py-1 ${
+                    (study.config.linksEnabled ?? true) ? 'border-ink-500 text-ink-900' : 'border-ink-300 text-ink-500'
+                  }`}
+                >
+                  {(study.config.linksEnabled ?? true) ? 'ENABLED' : 'DISABLED'}
+                </Coordinate>
+              </button>
+            </div>
+
+            {study.config.linkExpiration && study.config.linkExpiration !== 'never' && (
+              <p className="mt-3 text-[13px] text-ink-500">
+                Links expire: {study.config.linkExpiration === '7days' ? '7 days' : study.config.linkExpiration === '30days' ? '30 days' : '90 days'} after generation
+              </p>
+            )}
+
+            {!(study.config.linksEnabled ?? true) && (
+              <div className="mt-3 border-l-2 border-error bg-paper-2 px-4 py-3">
+                <p className="text-[13px] text-ink-700">
+                  Warning: All participant links are currently disabled. Participants trying to access the study will see an error message.
+                </p>
+              </div>
+            )}
+
+            <div className="mt-6 border-t border-ink-300 pt-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h4 className="font-sans text-[15px] font-medium text-ink-900">Generated links</h4>
+                  <p className="text-[13px] text-ink-500">
+                    Only dates and status are retained here. Link URLs cannot be viewed again after creation.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void loadParticipantLinks()}
+                  disabled={linksLoading}
+                  aria-label="Refresh participant links"
+                  className="min-h-11 font-sans text-[13px] text-ink-500 hover:text-ink-900 disabled:opacity-50"
+                >
+                  Refresh
+                </button>
+              </div>
+
+              {linksError ? (
+                <div className="mt-3 flex items-center justify-between gap-3 border-l-2 border-error bg-paper-2 px-4 py-3">
+                  <p className="text-[13px] text-ink-700">{linksError}</p>
+                  <button
+                    type="button"
+                    onClick={() => void loadParticipantLinks()}
+                    className="text-[13px] text-error hover:text-ink-900"
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : linksLoading ? (
+                <p className="mt-3 text-[13px] text-ink-500">Loading generated links…</p>
+              ) : participantLinks.length === 0 ? (
+                <p className="mt-3 text-[13px] text-ink-500">No generated links for this study yet.</p>
+              ) : (
+                <div>
+                  {participantLinks.map((link) => {
+                    const expired = link.expiresAt !== null && link.expiresAt <= linksLoadedAt;
+                    const replaced = link.studyRevision !== study.revision;
+                    const status = link.revokedAt !== null
+                      ? 'Revoked'
+                      : expired
+                        ? 'Expired'
+                        : replaced
+                          ? 'Replaced by study edit'
+                          : (study.config.linksEnabled ?? true)
+                            ? 'Active'
+                            : 'Globally disabled';
+                    const canRevoke = link.revokedAt === null && !expired;
+
+                    return (
+                      <div
+                        key={link.id}
+                        className="flex flex-col gap-2 border-t border-ink-300 py-3 sm:flex-row sm:items-center sm:justify-between"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2 text-[13px]">
+                            <span className="text-ink-700">Created {formatDate(link.createdAt)}</span>
+                            <span className={status === 'Active' ? 'text-success' : 'text-ink-500'}>{status}</span>
+                          </div>
+                          <Coordinate className="mt-1 block">
+                            {link.expiresAt === null
+                              ? 'No scheduled expiry'
+                              : `Expires ${formatDate(link.expiresAt)}`}
+                            {' · '}Study revision {link.studyRevision}
+                          </Coordinate>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void handleRevokeLink(link)}
+                          disabled={operationPending || !canRevoke || revokingLinkId === link.id}
+                          aria-label={`Revoke participant link created ${formatDate(link.createdAt)}`}
+                          className="min-h-11 font-sans text-[13px] text-error hover:text-ink-900 disabled:opacity-40"
+                        >
+                          Revoke
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Participant Link Generator */}
+          <div>
+            <h3 className="font-sans text-[15px] font-semibold text-ink-900">Participant Link</h3>
+
+            <div className="mt-4 space-y-4">
+              <Button
+                variant="primary"
+                onClick={handleGenerateLink}
+                disabled={operationPending || generatingLink || !(study.config.linksEnabled ?? true)}
+              >
+                Generate New Link
+              </Button>
+
+              {participantLink && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={participantLink}
+                      readOnly
+                      className="min-w-0 flex-1 rounded border border-ink-300 bg-paper-2 px-3 py-2 font-mono text-[13px] text-ink-900"
+                    />
+                    <Button variant="quiet" onClick={handleCopyLink}>
+                      {copied ? 'Copied!' : 'Copy'}
+                    </Button>
+                  </div>
+                  <div className="border-l-2 border-error bg-paper-2 px-4 py-3">
+                    <p className="text-[13px] text-ink-700">
+                      Copy this link now. For security, its URL cannot be recovered from the generated-links list.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <p className="text-[13px] text-ink-500">
+                Each click generates a new unique link. All links share the same enable/disable toggle above.
+                {!(study.config.linksEnabled ?? true) && ' Links are currently disabled - enable access above first.'}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

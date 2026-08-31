@@ -5,29 +5,32 @@
 export const dynamic = 'force-dynamic';
 
 import { NextResponse } from 'next/server';
-import { getInterviewProvider } from '@/lib/providers';
-import { getRequestContext } from '@/lib/researcherContext';
-import { getStudy, getStudyInterviews, isKVAvailable } from '@/lib/kv';
+import {
+  getInterviewProvider,
+} from '@/lib/providers';
+import { getAuthorizedResearcherStudyContext, providerKeysFromContext } from '@/lib/researcherContext';
+import { configurationRequiredResponse } from '@/lib/researcherAccess';
+import { getStudyChecked, getStudyInterviewsChecked } from '@/lib/kv';
+import { mapCollectionLoad, mapStudyLoad } from '@/lib/ownedStudies';
+import { providerErrorResponse } from '@/lib/providerErrors';
+import { createAggregateSynthesisReceipt } from '@/lib/synthesisReceipt';
+import { hostedAiRateLimitResponse } from '@/lib/platformAiRateLimit';
 import { AggregateSynthesisResult, SynthesisResult } from '@/types';
+import { readBoundedJsonObject } from '@/lib/requestBody';
+import { createRequestId, logRequestFailure } from '@/lib/requestLog';
 
 export async function POST(request: Request) {
   try {
-    const { authorized, context, error } = await getRequestContext();
-    if (!authorized || !context) {
-      return NextResponse.json({ error: error || 'Unauthorized' }, { status: 401 });
-    }
-
-    const kvAvailable = await isKVAvailable(context.kvClient);
-    if (!kvAvailable) {
+    const parsedBody = await readBoundedJsonObject(request, 4_096);
+    if (!parsedBody.ok) {
       return NextResponse.json(
-        { error: 'Storage not configured. Connect Vercel KV to enable this feature.' },
-        { status: 503 }
+        { error: parsedBody.status === 413 ? 'Aggregate request is too large.' : 'Invalid aggregate request.' },
+        { status: parsedBody.status }
       );
     }
-
-    // Parse request body
-    const body = await request.json();
-    const { studyId } = body as { studyId: string };
+    const studyId = typeof parsedBody.value.studyId === 'string'
+      ? parsedBody.value.studyId
+      : '';
 
     if (!studyId) {
       return NextResponse.json(
@@ -36,60 +39,109 @@ export async function POST(request: Request) {
       );
     }
 
-    // Fetch study to get config
-    const study = await getStudy(studyId, context.kvClient);
-    if (!study) {
+    const gated = await getAuthorizedResearcherStudyContext(studyId, 'read');
+    const denied = configurationRequiredResponse(gated);
+    if (denied) return denied;
+    if (!gated.authorized || !gated.context) {
       return NextResponse.json(
-        { error: 'Study not found' },
-        { status: 404 }
+        {
+          error: gated.error || 'Unauthorized',
+          retryable: gated.retryable,
+          ...(gated.code ? { code: gated.code } : {}),
+          ...(gated.reason ? { reason: gated.reason } : {}),
+        },
+        { status: gated.statusCode ?? 401 },
       );
     }
 
-    // Fetch all interviews for this study
-    const interviews = await getStudyInterviews(studyId, context.kvClient);
-    if (interviews.length < 2) {
-      return NextResponse.json(
-        { error: 'Need at least 2 interviews to generate aggregate synthesis' },
-        { status: 400 }
-      );
-    }
+    const loadedStudy = await getStudyChecked(studyId, gated.context.kvClient);
+    const studyMapped = mapStudyLoad(loadedStudy);
+    if (!studyMapped.ok) return NextResponse.json(studyMapped.body, { status: studyMapped.status });
+    const study = studyMapped.study;
 
-    // Extract synthesis results from interviews
-    const syntheses: SynthesisResult[] = interviews
-      .filter(interview => interview.synthesis)
-      .map(interview => interview.synthesis!);
-
-    if (syntheses.length < 2) {
-      return NextResponse.json(
-        { error: 'Need at least 2 interviews with synthesis results' },
-        { status: 400 }
-      );
-    }
-
-    // Get the configured AI provider with researcher's API keys
-    const provider = getInterviewProvider(study.config, {
-      geminiApiKey: context.geminiApiKey,
-      anthropicApiKey: context.anthropicApiKey,
+    const loadedInterviews = await getStudyInterviewsChecked(studyId, gated.context.kvClient, 1_000);
+    const interviewsMapped = mapCollectionLoad(loadedInterviews, {
+      unavailable: 'Interview storage is temporarily unavailable.',
+      tooLarge: 'This study has too many interviews for an interactive aggregate analysis.',
     });
+    if (!interviewsMapped.ok) {
+      return NextResponse.json(interviewsMapped.body, { status: interviewsMapped.status });
+    }
+    const interviews = interviewsMapped.items;
+    const currentRevisionInterviews = interviews.filter(
+      interview => interview.studyRevision === study.revision && interview.synthesis
+    );
+
+    if (currentRevisionInterviews.length < 2) {
+      return NextResponse.json(
+        {
+          error: 'Need at least 2 completed interviews from the current study revision',
+          studyRevision: study.revision,
+          eligibleInterviewCount: currentRevisionInterviews.length,
+        },
+        { status: 400 }
+      );
+    }
+
+    const syntheses: SynthesisResult[] = currentRevisionInterviews.map(
+      interview => interview.synthesis!
+    );
+
+    const platformLimited = await hostedAiRateLimitResponse(
+      request,
+      'aggregate',
+      { researcherId: gated.researcherId }
+    );
+    if (platformLimited) return platformLimited;
+
+    // Get the configured AI provider with researcher's API keys.
+    let provider;
+    try {
+      provider = getInterviewProvider(study.config, providerKeysFromContext(gated.context));
+    } catch {
+      return NextResponse.json(
+        { error: 'AI provider is not configured on the server.' },
+        { status: 502 }
+      );
+    }
 
     // Generate aggregate synthesis
-    const aggregateResult = await provider.synthesizeAggregate(
-      study.config,
-      syntheses,
-      interviews.length
-    );
+    let aggregateResult;
+    try {
+      aggregateResult = await provider.synthesizeAggregate(
+        study.config,
+        syntheses,
+        currentRevisionInterviews.length
+      );
+    } catch (providerError) {
+      return providerErrorResponse(providerError);
+    }
 
     // Build full result with metadata
     const fullResult: AggregateSynthesisResult = {
+      ...aggregateResult.value,
       studyId,
-      interviewCount: interviews.length,
-      ...aggregateResult,
+      studyRevision: study.revision,
+      interviewIds: currentRevisionInterviews.map(interview => interview.id),
+      interviewCount: currentRevisionInterviews.length,
+      aiProvider: aggregateResult.execution.provider,
+      requestedAiModel: aggregateResult.execution.requestedModel,
+      aiModel: aggregateResult.execution.model,
+      routedProvider: aggregateResult.execution.routedProvider,
       generatedAt: Date.now()
     };
 
-    return NextResponse.json({ synthesis: fullResult });
+    const receipt = await createAggregateSynthesisReceipt(fullResult);
+
+    return NextResponse.json({ synthesis: { ...fullResult, _receipt: receipt } });
   } catch (error) {
-    console.error('Aggregate synthesis API error:', error);
+    logRequestFailure({
+      event: 'route.failure',
+      route: '/api/synthesis/aggregate',
+      method: 'POST',
+      status: 500,
+      requestId: createRequestId(request.headers.get('x-request-id')),
+    }, error);
     return NextResponse.json(
       { error: 'Failed to generate aggregate synthesis' },
       { status: 500 }

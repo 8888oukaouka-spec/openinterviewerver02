@@ -1,0 +1,199 @@
+// @vitest-environment node
+
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import * as jose from 'jose';
+import {
+  createAggregateSynthesisReceipt,
+  createSynthesisReceipt,
+  verifyAggregateSynthesisReceipt,
+  verifySynthesisReceipt,
+} from '@/lib/synthesisReceipt';
+import { getParticipantSigningSecret } from '@/lib/auth';
+import {
+  CLAUDE_SYNTHESIS_MODEL,
+  GEMINI_SYNTHESIS_MODEL,
+  OPENAI_SYNTHESIS_MODEL,
+  OPENROUTER_SYNTHESIS_MODEL,
+} from '@/types';
+
+const payload = {
+  studyId: 'study-a',
+  studyRevision: 1,
+  participantSessionId: 'session-a',
+  aiProvider: 'gemini' as const,
+  aiModel: GEMINI_SYNTHESIS_MODEL,
+  requestedAiModel: GEMINI_SYNTHESIS_MODEL,
+  transcript: [{ id: 'm1', role: 'user', content: 'Hello', timestamp: 1 }],
+  participantProfile: null,
+  behaviorData: { timePerTopic: {}, messagesPerTopic: {}, topicsExplored: [], contradictions: [] },
+  synthesis: {
+    statedPreferences: [], revealedPreferences: [], themes: [], contradictions: [],
+    keyInsights: ['Insight'], bottomLine: 'Bottom line',
+  },
+};
+
+beforeEach(() => {
+  process.env.PARTICIPANT_TOKEN_SECRET = 'participant-receipt-secret-12345678901234567890';
+});
+
+afterEach(() => {
+  delete process.env.PARTICIPANT_TOKEN_SECRET;
+});
+
+describe('synthesis receipts', () => {
+  it('binds synthesis to the session, study revision, transcript, profile, and behavior', async () => {
+    const receipt = await createSynthesisReceipt(payload);
+
+    await expect(verifySynthesisReceipt({ ...payload, receipt })).resolves.toEqual({
+      aiProvider: 'gemini',
+      aiModel: GEMINI_SYNTHESIS_MODEL,
+      requestedAiModel: GEMINI_SYNTHESIS_MODEL,
+    });
+    await expect(verifySynthesisReceipt({
+      ...payload,
+      receipt,
+      transcript: [{ id: 'm1', role: 'user', content: 'Tampered', timestamp: 1 }],
+    })).resolves.toBeNull();
+    await expect(verifySynthesisReceipt({
+      ...payload,
+      receipt,
+      participantSessionId: 'other-session',
+    })).resolves.toBeNull();
+  });
+
+  it('returns the generation-time provider and model from the signed receipt', async () => {
+    const receipt = await createSynthesisReceipt({
+      ...payload,
+      aiProvider: 'claude',
+      aiModel: CLAUDE_SYNTHESIS_MODEL,
+      requestedAiModel: CLAUDE_SYNTHESIS_MODEL,
+    });
+
+    await expect(verifySynthesisReceipt({ ...payload, receipt })).resolves.toEqual({
+      aiProvider: 'claude',
+      aiModel: CLAUDE_SYNTHESIS_MODEL,
+      requestedAiModel: CLAUDE_SYNTHESIS_MODEL,
+    });
+  });
+
+  it('accepts signed receipts for OpenAI and OpenRouter providers', async () => {
+    const openaiReceipt = await createSynthesisReceipt({
+      ...payload,
+      aiProvider: 'openai',
+      aiModel: OPENAI_SYNTHESIS_MODEL,
+      requestedAiModel: OPENAI_SYNTHESIS_MODEL,
+    });
+    const openrouterReceipt = await createSynthesisReceipt({
+      ...payload,
+      aiProvider: 'openrouter',
+      aiModel: 'openai/gpt-5.6-sol-2026-08-01',
+      requestedAiModel: OPENROUTER_SYNTHESIS_MODEL,
+      routedProvider: 'OpenAI',
+    });
+
+    await expect(verifySynthesisReceipt({ ...payload, receipt: openaiReceipt })).resolves.toEqual({
+      aiProvider: 'openai',
+      aiModel: OPENAI_SYNTHESIS_MODEL,
+      requestedAiModel: OPENAI_SYNTHESIS_MODEL,
+    });
+    await expect(verifySynthesisReceipt({ ...payload, receipt: openrouterReceipt })).resolves.toEqual({
+      aiProvider: 'openrouter',
+      aiModel: 'openai/gpt-5.6-sol-2026-08-01',
+      requestedAiModel: OPENROUTER_SYNTHESIS_MODEL,
+      routedProvider: 'OpenAI',
+    });
+  });
+
+  it('rejects OpenRouter receipts without upstream routing provenance', async () => {
+    const receipt = await createSynthesisReceipt({
+      ...payload,
+      aiProvider: 'openrouter',
+      aiModel: 'openai/gpt-5.6-sol-2026-08-01',
+      requestedAiModel: OPENROUTER_SYNTHESIS_MODEL,
+    });
+
+    await expect(verifySynthesisReceipt({ ...payload, receipt })).resolves.toBeNull();
+  });
+
+  it('accepts a valid v2 receipt for one rollout window and maps requested=model', async () => {
+    const currentReceipt = await createSynthesisReceipt(payload);
+    const decoded = jose.decodeJwt(currentReceipt) as Record<string, unknown>;
+    const legacyPayload: Record<string, unknown> = { ...decoded, version: 2 };
+    delete legacyPayload.requestedAiModel;
+    delete legacyPayload.routedProvider;
+    const v2Receipt = await new jose.SignJWT(legacyPayload)
+      .setProtectedHeader({ alg: 'HS256' })
+      .sign(getParticipantSigningSecret());
+
+    await expect(verifySynthesisReceipt({ ...payload, receipt: v2Receipt })).resolves.toEqual({
+      aiProvider: 'gemini',
+      aiModel: GEMINI_SYNTHESIS_MODEL,
+      requestedAiModel: GEMINI_SYNTHESIS_MODEL,
+    });
+  });
+
+  it('fails closed when signed provenance is not a supported provider/model pair', async () => {
+    const receipt = await createSynthesisReceipt(payload);
+    const invalidReceipt = await new jose.SignJWT({
+      ...jose.decodeJwt(receipt),
+      aiProvider: 'unsupported-provider',
+    })
+      .setProtectedHeader({ alg: 'HS256' })
+      .sign(getParticipantSigningSecret());
+
+    await expect(verifySynthesisReceipt({ ...payload, receipt: invalidReceipt })).resolves.toBeNull();
+  });
+
+  it('fails closed on legacy receipts without signed provenance', async () => {
+    const legacyReceipt = await new jose.SignJWT({
+      type: 'synthesis-receipt',
+      version: 1,
+      studyId: payload.studyId,
+      studyRevision: payload.studyRevision,
+      participantSessionId: payload.participantSessionId,
+      dataDigest: 'legacy-digest',
+    })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setIssuer('openinterviewer')
+      .setAudience('openinterviewer:synthesis-receipt')
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .sign(getParticipantSigningSecret());
+
+    await expect(verifySynthesisReceipt({ ...payload, receipt: legacyReceipt })).resolves.toBeNull();
+  });
+});
+
+describe('aggregate synthesis receipts', () => {
+  const aggregate = {
+    studyId: 'study-a',
+    studyRevision: 1,
+    interviewIds: ['interview-a', 'interview-b'],
+    interviewCount: 2,
+    aiProvider: 'openrouter' as const,
+    aiModel: 'openai/gpt-5.6-sol-2026-08-01',
+    requestedAiModel: OPENROUTER_SYNTHESIS_MODEL,
+    routedProvider: 'OpenAI',
+    commonThemes: [],
+    divergentViews: [],
+    keyFindings: ['A signed finding'],
+    researchImplications: [],
+    bottomLine: 'Signed aggregate.',
+    generatedAt: 1,
+  };
+
+  it('binds aggregate content, interview provenance, and routed provider', async () => {
+    const receipt = await createAggregateSynthesisReceipt(aggregate);
+
+    await expect(verifyAggregateSynthesisReceipt({ receipt, synthesis: aggregate })).resolves.toEqual({
+      aiProvider: 'openrouter',
+      aiModel: aggregate.aiModel,
+      requestedAiModel: OPENROUTER_SYNTHESIS_MODEL,
+      routedProvider: 'OpenAI',
+    });
+    await expect(verifyAggregateSynthesisReceipt({
+      receipt,
+      synthesis: { ...aggregate, bottomLine: 'Tampered aggregate.' },
+    })).resolves.toBeNull();
+  });
+});

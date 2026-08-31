@@ -1,50 +1,128 @@
-// OpenAI Provider Implementation
-// Server-side only - uses API key from environment
-
 import OpenAI from 'openai';
 import {
   AIProvider,
   buildInterviewSystemPrompt,
   cleanJSON,
-  defaultInterviewResponse,
-  defaultSynthesisResult,
-  defaultAggregateSynthesisResult
+  type ProviderResult,
 } from '../ai';
 import {
+  buildAggregateSynthesisPrompt,
   buildGreetingPrompt,
-  getDefaultGreeting,
   buildSynthesisPrompt,
-  buildAggregateSynthesisPrompt
 } from '../prompts';
 import {
-  StudyConfig,
-  ParticipantProfile,
-  InterviewMessage,
-  SynthesisResult,
-  BehaviorData,
-  AIInterviewResponse,
-  QuestionProgress,
-  AggregateSynthesisResult,
+  type AggregateSynthesisResult,
+  type AIInterviewResponse,
+  type BehaviorData,
   DEFAULT_OPENAI_MODEL,
+  type InterviewMessage,
   OPENAI_SYNTHESIS_MODEL,
+  type ParticipantProfile,
+  type QuestionProgress,
+  type StudyConfig,
+  type SynthesisResult,
 } from '@/types';
+import {
+  ProviderFailure,
+  ProviderTimeoutError,
+  logProviderFailure,
+  providerCallError,
+  withProviderDeadline,
+} from '../providerErrors';
+import {
+  validateAggregateSynthesisPayload,
+  validateFollowupStudy,
+  validateInterviewResponse,
+  validateSynthesisResult,
+  type FollowupStudy,
+} from '../providerValidation';
+import {
+  aggregateSynthesisResponseSchema,
+  followupStudyResponseSchema,
+  interviewResponseSchema,
+  synthesisResponseSchema,
+  type ProviderJsonSchema,
+} from '../providerSchemas';
+import {
+  buildFollowupPrompt,
+  execution,
+  formatInterviewHistory,
+  GREETING_DEADLINE_MS,
+  INTERVIEW_DEADLINE_MS,
+  providerResult,
+  SYNTHESIS_DEADLINE_MS,
+  type AggregateSynthesisPayload,
+} from './shared';
+import { isKnownProviderModel } from '../providerRegistry';
+
+export function getOpenAIReasoning(
+  enableReasoning?: boolean,
+): OpenAI.Responses.ResponseCreateParams['reasoning'] {
+  if (enableReasoning === undefined) return undefined;
+  return { effort: enableReasoning ? 'medium' : 'none' };
+}
 
 export class OpenAIProvider implements AIProvider {
-  private client: OpenAI;
-  private model: string;
-  private synthesisModel: string;
+  private readonly client: OpenAI;
+  private readonly model: string;
 
   constructor(model?: string, apiKey?: string | null) {
     const key = apiKey !== undefined ? (apiKey || undefined) : process.env.OPENAI_API_KEY;
-    if (!key) {
-      throw new Error('OPENAI_API_KEY is required');
-    }
+    if (!key) throw new Error('OPENAI_API_KEY is required for OpenAI provider');
+
     this.client = new OpenAI({ apiKey: key });
-    this.model = model ||
-      process.env.OPENAI_MODEL ||
-      process.env.AI_MODEL ||
-      DEFAULT_OPENAI_MODEL;
-    this.synthesisModel = OPENAI_SYNTHESIS_MODEL;
+    this.model = model
+      || process.env.OPENAI_MODEL
+      || process.env.AI_MODEL
+      || DEFAULT_OPENAI_MODEL;
+    if (!isKnownProviderModel('openai', this.model)) {
+      throw new Error(`Unsupported OpenAI model: ${this.model}`);
+    }
+  }
+
+  private async createResponse(options: {
+    model: string;
+    input: string;
+    instructions?: string;
+    schema?: ProviderJsonSchema;
+    schemaName?: string;
+    enableReasoning?: boolean;
+    maxOutputTokens: number;
+    deadlineMs: number;
+    operation: string;
+  }) {
+    try {
+      return await withProviderDeadline(options.deadlineMs, (signal) =>
+        this.client.responses.create({
+          model: options.model,
+          input: options.input,
+          store: false,
+          max_output_tokens: options.maxOutputTokens,
+          ...(options.instructions ? { instructions: options.instructions } : {}),
+          ...(options.schema
+            ? {
+                text: {
+                  format: {
+                    type: 'json_schema' as const,
+                    name: options.schemaName || 'openinterviewer_response',
+                    schema: options.schema,
+                    strict: true,
+                  },
+                },
+              }
+            : {}),
+          ...(getOpenAIReasoning(options.enableReasoning)
+            ? { reasoning: getOpenAIReasoning(options.enableReasoning) }
+            : {}),
+        }, {
+          signal,
+          timeout: options.deadlineMs,
+        })
+      );
+    } catch (error) {
+      if (error instanceof ProviderTimeoutError || error instanceof ProviderFailure) throw error;
+      throw providerCallError('openai', options.operation, error);
+    }
   }
 
   async generateInterviewResponse(
@@ -52,179 +130,121 @@ export class OpenAIProvider implements AIProvider {
     studyConfig: StudyConfig,
     participantProfile: ParticipantProfile | null,
     questionProgress: QuestionProgress,
-    currentContext: string
+    currentContext: string,
   ): Promise<AIInterviewResponse> {
-    const systemPrompt = buildInterviewSystemPrompt(
-      studyConfig,
-      participantProfile,
-      questionProgress,
-      currentContext
-    );
-
-    try {
-      const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-        { role: 'system', content: systemPrompt },
-        ...history.slice(-10).map(h => ({
-          role: (h.role === 'ai' ? 'assistant' : 'user') as 'assistant' | 'user',
-          content: h.content
-        }))
-      ];
-
-      const response = await this.client.chat.completions.create({
-        model: this.model,
-        messages,
-        response_format: { type: 'json_object' },
-        temperature: 0.7,
-      });
-
-      const text = response.choices[0]?.message?.content || '{}';
-      const parsed = JSON.parse(cleanJSON(text));
-
-      return {
-        message: parsed.message || "That's interesting. Could you tell me more?",
-        questionAddressed: parsed.questionAddressed ?? null,
-        phaseTransition: parsed.phaseTransition ?? null,
-        profileUpdates: parsed.profileUpdates || [],
-        shouldConclude: parsed.shouldConclude || false
-      };
-    } catch (error) {
-      console.error('OpenAI interview response error:', error);
-      return defaultInterviewResponse;
-    }
+    const response = await this.createResponse({
+      model: this.model,
+      input: formatInterviewHistory(history) || 'PARTICIPANT: Please continue the interview.',
+      instructions: buildInterviewSystemPrompt(
+        studyConfig,
+        participantProfile,
+        questionProgress,
+        currentContext,
+      ),
+      schema: interviewResponseSchema,
+      schemaName: 'interview_response',
+      enableReasoning: studyConfig.enableReasoning,
+      maxOutputTokens: 4096,
+      deadlineMs: INTERVIEW_DEADLINE_MS,
+      operation: 'interview',
+    });
+    return this.parseStructured(response.output_text, 'interview', validateInterviewResponse);
   }
 
   async getInterviewGreeting(studyConfig: StudyConfig): Promise<string> {
-    const prompt = buildGreetingPrompt(studyConfig);
-
-    try {
-      const response = await this.client.chat.completions.create({
-        model: this.model,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.7,
-      });
-
-      const text = (response.choices[0]?.message?.content || '').trim()
-        .replace(/^["'\\]+|["'\\]+$/g, '');
-      return text || getDefaultGreeting(studyConfig);
-    } catch (error) {
-      console.error('OpenAI greeting error:', error);
-      return getDefaultGreeting(studyConfig);
+    const response = await this.createResponse({
+      model: this.model,
+      input: buildGreetingPrompt(studyConfig),
+      maxOutputTokens: 500,
+      deadlineMs: GREETING_DEADLINE_MS,
+      operation: 'greeting',
+    });
+    if (!response.output_text?.trim()) {
+      throw new ProviderFailure('invalid-response', 'OpenAI greeting returned no text');
     }
+    return response.output_text;
   }
 
   async synthesizeInterview(
     history: InterviewMessage[],
     studyConfig: StudyConfig,
     behaviorData: BehaviorData,
-    participantProfile: ParticipantProfile | null
-  ): Promise<SynthesisResult> {
-    const prompt = buildSynthesisPrompt(history, studyConfig, behaviorData, participantProfile);
-
-    try {
-      const response = await this.client.chat.completions.create({
-        model: this.synthesisModel,
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a research analyst. Always respond with valid JSON only, no markdown.'
-          },
-          { role: 'user', content: prompt }
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0.3,
-      });
-
-      const text = response.choices[0]?.message?.content || '{}';
-      return JSON.parse(cleanJSON(text)) as SynthesisResult;
-    } catch (error) {
-      console.error('OpenAI synthesis error:', error);
-      return defaultSynthesisResult;
-    }
+    participantProfile: ParticipantProfile | null,
+  ): Promise<ProviderResult<SynthesisResult>> {
+    const requestedModel = OPENAI_SYNTHESIS_MODEL;
+    const response = await this.createResponse({
+      model: requestedModel,
+      input: buildSynthesisPrompt(history, studyConfig, behaviorData, participantProfile),
+      schema: synthesisResponseSchema,
+      schemaName: 'interview_synthesis',
+      enableReasoning: studyConfig.enableReasoning ?? true,
+      maxOutputTokens: 8192,
+      deadlineMs: SYNTHESIS_DEADLINE_MS,
+      operation: 'synthesis',
+    });
+    const value = this.parseStructured(response.output_text, 'synthesis', validateSynthesisResult);
+    return providerResult(value, execution('openai', requestedModel, response.model));
   }
 
   async synthesizeAggregate(
     studyConfig: StudyConfig,
     syntheses: SynthesisResult[],
-    interviewCount: number
-  ) {
-    const prompt = buildAggregateSynthesisPrompt(studyConfig, syntheses, interviewCount);
-
-    try {
-      const response = await this.client.chat.completions.create({
-        model: this.synthesisModel,
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a research analyst. Always respond with valid JSON only, no markdown.'
-          },
-          { role: 'user', content: prompt }
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0.3,
-      });
-
-      const text = response.choices[0]?.message?.content || '{}';
-      return JSON.parse(cleanJSON(text));
-    } catch (error) {
-      console.error('OpenAI aggregate synthesis error:', error);
-      return defaultAggregateSynthesisResult;
-    }
+    interviewCount: number,
+  ): Promise<ProviderResult<AggregateSynthesisPayload>> {
+    const requestedModel = OPENAI_SYNTHESIS_MODEL;
+    const response = await this.createResponse({
+      model: requestedModel,
+      input: buildAggregateSynthesisPrompt(studyConfig, syntheses, interviewCount),
+      schema: aggregateSynthesisResponseSchema,
+      schemaName: 'aggregate_synthesis',
+      enableReasoning: studyConfig.enableReasoning ?? true,
+      maxOutputTokens: 12_000,
+      deadlineMs: SYNTHESIS_DEADLINE_MS,
+      operation: 'aggregate-synthesis',
+    });
+    const value = this.parseStructured(
+      response.output_text,
+      'aggregate-synthesis',
+      validateAggregateSynthesisPayload,
+    );
+    return providerResult(value, execution('openai', requestedModel, response.model));
   }
 
   async generateFollowupStudy(
     parentConfig: StudyConfig,
-    synthesis: AggregateSynthesisResult
-  ): Promise<{ name: string; researchQuestion: string; coreQuestions: string[] }> {
-    const prompt = `You are helping design a follow-up research study.
+    synthesis: AggregateSynthesisResult,
+  ): Promise<ProviderResult<FollowupStudy>> {
+    const requestedModel = OPENAI_SYNTHESIS_MODEL;
+    const response = await this.createResponse({
+      model: requestedModel,
+      input: buildFollowupPrompt(parentConfig, synthesis),
+      schema: followupStudyResponseSchema,
+      schemaName: 'followup_study',
+      enableReasoning: parentConfig.enableReasoning ?? true,
+      maxOutputTokens: 4096,
+      deadlineMs: SYNTHESIS_DEADLINE_MS,
+      operation: 'follow-up',
+    });
+    const value = this.parseStructured(response.output_text, 'follow-up', validateFollowupStudy);
+    return providerResult(value, execution('openai', requestedModel, response.model));
+  }
 
-PARENT STUDY: "${parentConfig.name}"
-PARENT SUMMARY: ${synthesis.bottomLine}
-
-KEY FINDINGS:
-${synthesis.keyFindings.map((f, i) => `${i + 1}. ${f}`).join('\n')}
-
-RESEARCH IMPLICATIONS:
-${(synthesis.researchImplications || []).map((r, i) => `${i + 1}. ${r}`).join('\n') || 'None specified'}
-
-DIVERGENT VIEWS:
-${(synthesis.divergentViews || []).map(d => `- ${d.topic}: "${d.viewA}" vs "${d.viewB}"`).join('\n') || 'None identified'}
-
-Generate a follow-up study that digs deeper into gaps or tensions found.
-Return a JSON object with:
-- name: A concise study name (start with "Follow-up: ")
-- researchQuestion: A specific, researchable question building on the findings
-- coreQuestions: 3-5 interview questions to explore this further`;
+  private parseStructured<T>(
+    text: string | undefined,
+    operation: string,
+    validate: (input: unknown) => T,
+  ): T {
+    if (!text) throw new ProviderFailure('invalid-response', `OpenAI ${operation} returned no text`);
 
     try {
-      const response = await this.client.chat.completions.create({
-        model: this.synthesisModel,
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a research designer. Always respond with valid JSON only, no markdown.'
-          },
-          { role: 'user', content: prompt }
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0.7,
-      });
-
-      const text = response.choices[0]?.message?.content || '{}';
-      const result = JSON.parse(cleanJSON(text));
-      return {
-        name: result.name || `Follow-up: ${parentConfig.name}`,
-        researchQuestion: result.researchQuestion || synthesis.keyFindings[0] || '',
-        coreQuestions: result.coreQuestions || []
-      };
+      return validate(JSON.parse(cleanJSON(text)));
     } catch (error) {
-      console.error('OpenAI follow-up generation error:', error);
-      return {
-        name: `Follow-up: ${parentConfig.name}`,
-        researchQuestion: `What deeper insights emerge from exploring: ${synthesis.keyFindings[0] || 'the findings'}?`,
-        coreQuestions: synthesis.keyFindings.slice(0, 3).map(f =>
-          `Can you tell me more about your experience with: ${f}?`
-        )
-      };
+      logProviderFailure('openai', `${operation}-parse`, error);
+      throw new ProviderFailure(
+        'invalid-response',
+        `OpenAI ${operation} returned unparseable or malformed JSON`,
+        error,
+      );
     }
   }
 }

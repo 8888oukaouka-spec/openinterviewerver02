@@ -1,58 +1,140 @@
 export const maxDuration = 60;
 
 // POST /api/greeting - Get interview greeting
-// Simplified: uses GEMINI_API_KEY directly in standalone mode
+// Server-side only - API keys never sent to client
+// Requires valid participant token to prevent quota abuse
+// Provider/model/prompts always come from the canonical saved study loaded
+// server-side; request bodies are never authoritative.
 
 import { NextResponse } from 'next/server';
-import { GoogleGenAI } from '@google/genai';
+import { getInterviewProvider } from '@/lib/providers';
+import {
+  providerKeysFromContext,
+  resolveParticipantOrPreviewContext,
+  selectedStudyIdFromParticipantBody,
+} from '@/lib/researcherContext';
+import { loadCanonicalStudy } from '@/lib/canonicalStudy';
+import { providerErrorResponse } from '@/lib/providerErrors';
+import { participantRateLimitResponse } from '@/lib/rateLimit';
+import { hostedAiRateLimitResponse } from '@/lib/platformAiRateLimit';
+import { verifyParticipantConsent } from '@/lib/participantConsent';
+import { readBoundedJsonObject } from '@/lib/requestBody';
 import { StudyConfig } from '@/types';
+import { createRequestId, logRequestFailure } from '@/lib/requestLog';
+
+// Legacy clients still send the complete study config. It is not authoritative,
+// but the cap must admit every valid 128 KiB study mutation plus its wrapper.
+const GREETING_REQUEST_MAX_BYTES = 140_000;
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const { studyConfig } = body as { studyConfig: StudyConfig };
-
-    if (!studyConfig) {
+    const parsedBody = await readBoundedJsonObject(request, GREETING_REQUEST_MAX_BYTES);
+    if (!parsedBody.ok) {
       return NextResponse.json(
-        { error: 'Missing required field: studyConfig' },
-        { status: 400 }
+        { error: parsedBody.status === 413 ? 'Greeting request is too large.' : 'Greeting request is malformed.' },
+        { status: parsedBody.status }
+      );
+    }
+    const body = parsedBody.value;
+
+    const { valid, context, studyId, isAdmin, error, statusCode, linkId, participantSessionId } =
+      await resolveParticipantOrPreviewContext(request, {
+        purpose: 'read',
+        selectedStudyId: selectedStudyIdFromParticipantBody(body),
+      });
+    if (!valid || !context) {
+      return NextResponse.json(
+        { error: error || 'Valid participant token required' },
+        { status: statusCode ?? 401 }
       );
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: 'GEMINI_API_KEY not configured' },
-        { status: 500 }
-      );
+    // The body's studyConfig carries only a study id (admin preview); the
+    // canonical saved study record is loaded server-side through the request's
+    // researcher KV context and is the sole source of provider/model config.
+    const canonical = await loadCanonicalStudy({
+      kvClient: context.kvClient,
+      tokenStudyId: studyId,
+      legacyBodyStudyId: (body as { studyConfig?: StudyConfig }).studyConfig?.id,
+      isAdmin,
+    });
+    if (!canonical.ok) {
+      return canonical.response;
     }
 
-    const ai = new GoogleGenAI({ apiKey });
-    const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-
-    const prompt = `You are starting a research interview for a study called "${studyConfig.name}".
-Research question: ${studyConfig.researchQuestion}
-
-Write a warm, natural opening greeting to welcome the participant and start the interview.
-Keep it to 2-3 sentences. Be friendly and conversational. Do not use quotes around your response.`;
-
-    const response = await ai.models.generateContent({
-      model,
-      contents: prompt,
-      config: {
-        thinkingConfig: { thinkingBudget: 0 }
+    if (!isAdmin) {
+      if (!participantSessionId) {
+        return NextResponse.json({ error: 'Participant session authority is incomplete.' }, { status: 401 });
       }
-    });
+      const consent = await verifyParticipantConsent(
+        {
+          participantSessionId,
+          studyId: canonical.study.id,
+          studyRevision: canonical.study.revision ?? 1,
+          consentText: canonical.study.config.consentText || '',
+        },
+        context.kvClient
+      );
+      if (consent.status === 'unavailable') {
+        return NextResponse.json(
+          { error: 'Unable to verify participant consent. Please try again.', retryable: true },
+          { status: 503 }
+        );
+      }
+      if (consent.status !== 'accepted') {
+        return NextResponse.json(
+          { error: 'Participant consent must be accepted before the interview begins.', code: 'CONSENT_REQUIRED' },
+          { status: 428 }
+        );
+      }
 
-    const text = (response.text || '').trim().replace(/^["'\\]+|["'\\]+$/g, '');
-    const greeting = text || `Welcome to the ${studyConfig.name} study! I'm glad you're here. Let's start by having you tell me a bit about yourself.`;
+      const limited = await participantRateLimitResponse(
+        request,
+        canonical.study.id,
+        'greeting',
+        context.kvClient,
+        { sessionId: participantSessionId, linkId, researcherId: context.researcherId }
+      );
+      if (limited) return limited;
+    }
 
-    return NextResponse.json({ greeting });
+    const platformLimited = await hostedAiRateLimitResponse(
+      request,
+      'greeting',
+      {
+        researcherId: context.researcherId,
+        participantSessionId: isAdmin ? undefined : participantSessionId,
+      }
+    );
+    if (platformLimited) return platformLimited;
+
+    let provider;
+    try {
+      provider = getInterviewProvider(canonical.study.config, providerKeysFromContext(context));
+    } catch {
+      return NextResponse.json(
+        { error: 'AI provider is not configured on the server.' },
+        { status: 502 }
+      );
+    }
+
+    try {
+      const greeting = await provider.getInterviewGreeting(canonical.study.config);
+      return NextResponse.json({ greeting });
+    } catch (providerError) {
+      return providerErrorResponse(providerError);
+    }
   } catch (error) {
-    console.error('Greeting API error:', error);
-    // Return a fallback greeting instead of an error
-    return NextResponse.json({
-      greeting: "Welcome! Thank you for participating in this research study. I'm excited to learn from your experiences. To get started, could you share a bit about yourself?"
-    });
+    logRequestFailure({
+      event: 'route.failure',
+      route: '/api/greeting',
+      method: 'POST',
+      status: 500,
+      requestId: createRequestId(request.headers.get('x-request-id')),
+    }, error);
+    return NextResponse.json(
+      { error: 'Failed to generate greeting' },
+      { status: 500 }
+    );
   }
 }

@@ -3,42 +3,39 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useStore } from '@/store';
-import { ParticipantToken } from '@/types';
+import { StudyConfig } from '@/types';
 import Consent from '@/components/Consent';
 import InterviewChat from '@/components/InterviewChat';
 import Synthesis from '@/components/Synthesis';
 import Export from '@/components/Export';
-import { Loader2 } from 'lucide-react';
+import { Verbatim } from '@/components/ui';
+import type { AITransport } from '@/lib/aiTransport';
 
 export default function ParticipantPage() {
   const params = useParams();
   const router = useRouter();
-  const token = params.token as string;
+  const linkCode = params.token as string;
 
   const {
     currentStep,
-    setStep,
-    setStudyConfig,
-    setViewMode,
-    setParticipantToken,
+    beginParticipantSession,
     studyConfig
   } = useStore();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Verify token and load study config on mount
+  // Resolve the opaque link code and establish a cookie-backed participant session.
   useEffect(() => {
-    const loadStudyFromToken = async () => {
-      if (!token) {
-        setError('No token provided');
+    const loadStudyFromLink = async () => {
+      if (!linkCode) {
+        setError('No participant link code provided');
         setLoading(false);
         return;
       }
 
       try {
-        // Verify and decode the token
-        const response = await fetch(`/api/generate-link?token=${encodeURIComponent(token)}`);
+        const response = await fetch(`/api/generate-link?token=${encodeURIComponent(linkCode)}`);
         const result = await response.json();
 
         if (!result.valid || !result.data) {
@@ -47,60 +44,69 @@ export default function ParticipantPage() {
           return;
         }
 
-        const tokenData = result.data as ParticipantToken;
-
-        // Set the study config from token
-        setStudyConfig(tokenData.studyConfig);
-        setParticipantToken(token);
-        setViewMode('participant');
-        setStep('consent');
+        const resolvedLink = result.data as {
+          studyConfig: StudyConfig;
+          sessionHandle?: string;
+          aiTransport?: AITransport;
+        };
+        if (!resolvedLink.sessionHandle) {
+          setError('The participant session could not be established');
+          setLoading(false);
+          return;
+        }
+        beginParticipantSession(
+          resolvedLink.studyConfig,
+          resolvedLink.sessionHandle,
+          resolvedLink.aiTransport === 'gateway' ? 'gateway' : 'direct',
+        );
         setLoading(false);
+        router.replace('/consent');
       } catch (err) {
-        console.error('Error loading study from token:', err);
+        console.error('Error loading study from participant link:', err);
         setError('Failed to load study configuration');
         setLoading(false);
       }
     };
 
-    loadStudyFromToken();
-  }, [token]);
+    loadStudyFromLink();
+  }, [linkCode, beginParticipantSession, router]);
 
   // Loading state
   if (loading) {
     return (
-      <div className="min-h-screen bg-stone-900 flex items-center justify-center">
-        <div className="text-center">
-          <Loader2 size={48} className="animate-spin text-stone-400 mx-auto mb-4" />
-          <p className="text-stone-400">Loading interview...</p>
+      <main className="flex min-h-dvh items-center justify-center bg-paper-0 px-4 py-12">
+        <div className="w-full max-w-measure">
+          <p className="font-sans text-[15px] text-ink-500">Loading interview...</p>
         </div>
-      </div>
+      </main>
     );
   }
 
   // Error state
   if (error) {
     return (
-      <div className="min-h-screen bg-stone-900 flex items-center justify-center p-8">
-        <div className="max-w-md text-center">
-          <div className="w-16 h-16 rounded-full bg-stone-800 flex items-center justify-center mx-auto mb-4">
-            <span className="text-2xl">⚠️</span>
-          </div>
-          <h1 className="text-xl font-semibold text-white mb-2">Unable to Load Interview</h1>
-          <p className="text-stone-400 mb-6">{error}</p>
-          <p className="text-stone-500 text-sm">
+      <main className="flex min-h-dvh items-center justify-center bg-paper-0 px-4 py-12">
+        <div className="w-full max-w-measure">
+          <Verbatim as="h1" className="text-[28px] font-normal leading-[36px] text-ink-900">
+            Unable to Load Interview
+          </Verbatim>
+          <p className="mt-4 font-sans text-[15px] text-ink-700">{error}</p>
+          <p className="mt-2 font-sans text-[13px] text-ink-500">
             Please check that you have the correct link or contact the researcher.
           </p>
         </div>
-      </div>
+      </main>
     );
   }
 
   // No study config loaded
   if (!studyConfig) {
     return (
-      <div className="min-h-screen bg-stone-900 flex items-center justify-center">
-        <p className="text-stone-400">Study configuration not found.</p>
-      </div>
+      <main className="flex min-h-dvh items-center justify-center bg-paper-0 px-4 py-12">
+        <div className="w-full max-w-measure">
+          <p className="font-sans text-[15px] text-ink-500">Study configuration not found.</p>
+        </div>
+      </main>
     );
   }
 

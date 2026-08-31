@@ -2,23 +2,11 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { motion } from 'framer-motion';
 import { useStore } from '@/store';
-import { synthesizeInterview } from '@/services/geminiService';
-import { saveCompletedInterview, buildInterviewRecord } from '@/services/storageService';
-import {
-  Loader2,
-  ArrowRight,
-  ArrowLeft,
-  TrendingUp,
-  AlertTriangle,
-  Lightbulb,
-  Target,
-  BarChart3,
-  CheckCircle,
-  XCircle,
-  RefreshCw
-} from 'lucide-react';
+import { synthesizeInterview } from '@/services/interviewApi';
+import { saveCompletedInterview } from '@/services/storageService';
+import { Button, Citation, Coordinate, Label, Page, Rule, Verbatim } from '@/components/ui';
+import { resolveThemeEvidence } from '@/lib/evidence';
 
 const Synthesis: React.FC = () => {
   const router = useRouter();
@@ -30,13 +18,13 @@ const Synthesis: React.FC = () => {
     synthesis,
     setSynthesis,
     setStep,
-    setSaveStatus: setGlobalSaveStatus,
-    participantToken
+    participantSessionHandle,
+    viewMode
   } = useStore();
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<'pending' | 'saved' | 'failed' | null>(null);
+  const [saveStatus, setSaveStatus] = useState<'pending' | 'saved' | 'preview' | 'failed' | null>(null);
   const [analysisError, setAnalysisError] = useState(false);
 
   // Track if analysis has been attempted to prevent re-running
@@ -45,32 +33,40 @@ const Synthesis: React.FC = () => {
   // Counter to trigger re-analysis when retry is clicked
   const [retryTrigger, setRetryTrigger] = useState(0);
 
-  // Extract save logic into a reusable function for retry.
-  // synthesisToSave may be null: we still persist the transcript so an interview
-  // is never lost when synthesis fails. A later save with synthesis upserts the
-  // same record (the id is derived from the participant profile).
+  // Citation notes open on first paint; keyed `${themeIndex}:${refIndex}`.
+  const [openNotes, setOpenNotes] = useState<Record<string, boolean>>({});
+  const isNoteOpen = (themeIndex: number, refIndex: number) => openNotes[`${themeIndex}:${refIndex}`] ?? true;
+  const setNoteOpen = (themeIndex: number, refIndex: number, next: boolean) =>
+    setOpenNotes((prev) => ({ ...prev, [`${themeIndex}:${refIndex}`]: next }));
+
+  // Extract save logic into a reusable function for retry
   const doSave = async (synthesisToSave: typeof synthesis) => {
     if (!studyConfig) return;
 
     setIsSaving(true);
     setSaveStatus('pending');
-    setGlobalSaveStatus('saving');
     try {
-      const record = buildInterviewRecord({
-        studyConfig,
-        participantProfile,
+      const interviewId = participantProfile?.id || `interview-${Date.now()}`;
+      const saveResult = await saveCompletedInterview({
+        id: interviewId,
+        studyId: studyConfig.id,
+        studyName: studyConfig.name,
+        participantProfile: participantProfile || {
+          id: interviewId,
+          fields: [],
+          rawContext: '',
+          timestamp: Date.now()
+        },
         transcript: interviewHistory,
-        behaviorData,
-        synthesis: synthesisToSave
-      });
-      const saveResult = await saveCompletedInterview(record, participantToken);
+        synthesis: synthesisToSave,
+        behaviorData: behaviorData,
+        createdAt: participantProfile?.timestamp || Date.now()
+      }, viewMode === 'preview', participantSessionHandle);
 
-      setSaveStatus(saveResult.success ? 'saved' : 'failed');
-      setGlobalSaveStatus(saveResult.success ? 'saved' : 'failed');
+      setSaveStatus(saveResult.preview ? 'preview' : saveResult.success ? 'saved' : 'failed');
     } catch (error) {
       console.error('Error saving interview:', error);
       setSaveStatus('failed');
-      setGlobalSaveStatus('failed');
     } finally {
       setIsSaving(false);
     }
@@ -115,21 +111,19 @@ const Synthesis: React.FC = () => {
           studyConfig,
           behaviorData,
           participantProfile,
-          participantToken
+          viewMode === 'preview',
+          participantSessionHandle
         );
         setSynthesis(result);
 
-        // Save interview to KV after synthesis completes
+        // Save the interview to Upstash Redis after synthesis completes.
         await doSave(result);
       } catch (error) {
         console.error('Error synthesizing interview:', error);
         setAnalysisError(true);
-        // Keep hasAttemptedAnalysis = true so the effect doesn't auto-rerun
-        // synthesis when the save below changes saveStatus. The "Retry Analysis"
-        // button resets the flag for an explicit retry.
-        // Synthesis failed (e.g. AI provider overloaded) — still persist the
-        // raw transcript so the interview isn't lost. A later successful
-        // analysis upserts the same record with the synthesis attached.
+        hasAttemptedAnalysis.current = false;  // Allow retry
+        // Persist raw transcript even when synthesis fails so the interview is never lost.
+        // A later successful synthesis will upsert the same record with analysis attached.
         await doSave(null);
       } finally {
         setIsAnalyzing(false);
@@ -137,7 +131,7 @@ const Synthesis: React.FC = () => {
     };
 
     analyzeAndSave();
-    // Note: behaviorData, participantProfile, participantToken are intentionally
+    // Note: behaviorData and participantProfile are intentionally
     // not in deps - we only want to analyze once when the page loads, not on updates
     // retryTrigger is included to allow manual retry after failure
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -155,254 +149,314 @@ const Synthesis: React.FC = () => {
 
   if (!studyConfig) {
     return (
-      <div className="min-h-screen bg-stone-900 flex items-center justify-center">
-        <p className="text-stone-400">No study configured.</p>
+      <div className="flex min-h-dvh items-center justify-center bg-paper-0">
+        <p className="font-sans text-[15px] text-ink-500">No study configured.</p>
       </div>
     );
   }
 
+  if (viewMode === 'participant') {
+    const participantState = analysisError
+      ? 'analysis-failed'
+      : saveStatus === 'failed' || saveStatus === 'preview'
+        ? 'save-failed'
+        : saveStatus === 'saved'
+          ? 'saved'
+          : 'finalizing';
+
+    return (
+      <main className="min-h-dvh bg-paper-0 px-4 py-12 sm:px-8 sm:py-20">
+        <div className="mx-auto max-w-measure space-y-6">
+          {participantState === 'saved' ? (
+            <>
+              <Verbatim as="h1" className="text-[28px] font-normal leading-[36px] text-ink-900">
+                Interview submitted
+              </Verbatim>
+              <p className="font-sans text-[15px] leading-[24px] text-ink-700" role="status" aria-live="polite">
+                Your responses have been saved. It is now safe to close this tab.
+              </p>
+            </>
+          ) : participantState === 'analysis-failed' ? (
+            <>
+              <Verbatim as="h1" className="text-[28px] font-normal leading-[36px] text-ink-900">
+                We couldn&apos;t finalize your interview
+              </Verbatim>
+              <div className="border-l-2 border-error bg-paper-2 px-4 py-3">
+                <p className="font-sans text-[15px] leading-[24px] text-ink-700" role="alert">
+                  Your responses are still in this tab, but they have not been saved. Keep this tab open and try again.
+                </p>
+              </div>
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <Button variant="quiet" onClick={handleBack}>
+                  Back to interview
+                </Button>
+                <Button variant="primary" onClick={handleRetryAnalysis}>
+                  Retry finalization
+                </Button>
+              </div>
+            </>
+          ) : participantState === 'save-failed' ? (
+            <>
+              <Verbatim as="h1" className="text-[28px] font-normal leading-[36px] text-ink-900">
+                We couldn&apos;t save your interview
+              </Verbatim>
+              <div className="border-l-2 border-error bg-paper-2 px-4 py-3">
+                <p className="font-sans text-[15px] leading-[24px] text-ink-700" role="alert">
+                  Your responses are still in this tab. Keep it open and retry the save before closing.
+                </p>
+              </div>
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <Button variant="quiet" onClick={handleBack}>
+                  Back to interview
+                </Button>
+                <Button variant="primary" disabled={isSaving} onClick={handleRetrySave}>
+                  Retry save
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <Verbatim as="h1" className="text-[28px] font-normal leading-[36px] text-ink-900">
+                Finalizing your interview
+              </Verbatim>
+              <p className="font-sans text-[15px] leading-[24px] text-ink-700" role="status" aria-live="polite">
+                We are preparing and saving your responses. Keep this tab open until you see confirmation that it is safe to close.
+              </p>
+            </>
+          )}
+        </div>
+      </main>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-stone-900 p-8">
-      <div className="max-w-4xl mx-auto">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mb-8"
-        >
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-10 h-10 rounded-xl bg-stone-700 flex items-center justify-center">
-              <BarChart3 className="text-stone-300" size={20} />
-            </div>
-            <h1 className="text-3xl font-bold text-white">Interview Analysis</h1>
-          </div>
-          <p className="text-stone-400 ml-13">
+    <main className="min-h-dvh bg-paper-0">
+      <Page className="py-10 md:py-14">
+        <div>
+          <Label>Interview analysis</Label>
+          <h1 className="mt-2 font-sans text-[24px] font-semibold leading-[32px] text-ink-900">
+            {viewMode === 'preview' ? 'Researcher preview analysis' : 'Interview Analysis'}
+          </h1>
+          <p className="mt-1 font-sans text-[15px] leading-[24px] text-ink-700">
             Patterns and insights from the conversation
           </p>
-        </motion.div>
+        </div>
+        <Rule className="my-8" />
 
         {isAnalyzing ? (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="bg-stone-800/50 rounded-xl border border-stone-700 p-12 text-center"
-          >
-            <Loader2 size={48} className="animate-spin text-stone-400 mx-auto mb-4" />
-            <h2 className="text-xl font-semibold text-white mb-2">
-              Analyzing Interview...
-            </h2>
-            <p className="text-stone-400">
+          <div>
+            <h2 className="font-sans text-[18px] font-semibold text-ink-900">Analyzing Interview...</h2>
+            <p className="mt-2 font-sans text-[15px] text-ink-700">
               Looking for patterns, themes, and insights
             </p>
-          </motion.div>
+          </div>
         ) : synthesis ? (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="space-y-6"
-          >
-            {/* Save Status Banner */}
+          <div className="space-y-6">
+            {/* Save Status Notices */}
             {saveStatus === 'saved' && (
-              <div className="bg-green-900/30 border border-green-700 text-green-300 rounded-xl p-4 flex items-center gap-3">
-                <CheckCircle size={20} />
-                <span>Interview saved successfully. View it in the researcher dashboard.</span>
+              <div className="border-l-2 border-success bg-paper-2 px-4 py-3">
+                <Label>Saved</Label>
+                <p className="mt-1 text-[13px] text-ink-700">
+                  Interview saved successfully. View it in the researcher dashboard.
+                </p>
+              </div>
+            )}
+            {saveStatus === 'preview' && (
+              <div className="border-l-2 border-ink-500 bg-paper-2 px-4 py-3">
+                <Label>Preview</Label>
+                <p className="mt-1 text-[13px] text-ink-700">
+                  Preview complete. This interview was not added to the study data.
+                </p>
               </div>
             )}
             {saveStatus === 'failed' && (
-              <div className="bg-yellow-900/30 border border-yellow-700 text-yellow-300 rounded-xl p-4 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <XCircle size={20} />
-                  <span>Could not save interview. You can still export locally below.</span>
-                </div>
-                <button
-                  onClick={handleRetrySave}
-                  disabled={isSaving}
-                  className="px-3 py-1.5 bg-yellow-700 hover:bg-yellow-600 text-yellow-100 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 disabled:opacity-50"
-                >
-                  {isSaving ? (
-                    <Loader2 size={14} className="animate-spin" />
-                  ) : (
-                    <RefreshCw size={14} />
-                  )}
+              <div className="border-l-2 border-error bg-paper-2 px-4 py-3">
+                <Label>Not saved</Label>
+                <p className="mt-1 text-[13px] text-ink-700">
+                  Could not save interview. You can still export locally below.
+                </p>
+                <Button variant="quiet" disabled={isSaving} onClick={handleRetrySave} className="mt-2">
                   Retry Save
-                </button>
+                </Button>
               </div>
             )}
             {saveStatus === 'pending' && isSaving && (
-              <div className="bg-stone-800/50 border border-stone-600 text-stone-300 rounded-xl p-4 flex items-center gap-3">
-                <Loader2 size={20} className="animate-spin" />
-                <span>Saving interview...</span>
+              <div className="border-l-2 border-ink-500 bg-paper-2 px-4 py-3">
+                <Label>Saving</Label>
+                <p className="mt-1 text-[13px] text-ink-700">Saving interview...</p>
               </div>
             )}
 
-            {/* Bottom Line */}
-            <div className="bg-stone-700 text-white rounded-xl p-6">
-              <div className="flex items-center gap-2 mb-2 text-stone-400">
-                <Target size={18} />
-                <span className="text-sm font-medium uppercase tracking-wider">
-                  Key Insight
-                </span>
-              </div>
-              <p className="text-xl font-medium">{synthesis.bottomLine}</p>
-            </div>
+            {/* Bottom line */}
+            <section>
+              <Label className="block">Bottom line</Label>
+              <Verbatim
+                as="p"
+                className="mt-3 max-w-measure text-[24px] font-normal leading-[36px] text-ink-900 md:text-[28px] md:leading-[40px]"
+              >
+                {synthesis.bottomLine}
+              </Verbatim>
+            </section>
+            <Rule className="mt-8" />
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Stated vs Revealed */}
-              <div className="bg-stone-800/50 rounded-xl border border-stone-700 p-6">
-                <h3 className="font-semibold text-white mb-4 flex items-center gap-2">
-                  <TrendingUp size={18} className="text-stone-400" />
-                  Stated vs Revealed
-                </h3>
-
-                <div className="space-y-4">
-                  <div>
-                    <div className="text-xs font-medium text-stone-500 uppercase mb-2">
-                      What they said
-                    </div>
-                    <div className="space-y-1">
-                      {synthesis.statedPreferences.map((item, i) => (
-                        <div
-                          key={i}
-                          className="text-sm bg-stone-800 text-stone-300 px-3 py-1.5 rounded-lg"
-                        >
-                          {item}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="text-xs font-medium text-stone-500 uppercase mb-2">
-                      What their behavior revealed
-                    </div>
-                    <div className="space-y-1">
-                      {synthesis.revealedPreferences.map((item, i) => (
-                        <div
-                          key={i}
-                          className="text-sm bg-stone-700 text-stone-200 px-3 py-1.5 rounded-lg"
-                        >
-                          {item}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+            {/* Stated vs Revealed */}
+            <section>
+              <h3 className="font-sans text-[15px] font-semibold text-ink-900">Stated vs Revealed</h3>
+              <div className="mt-4 md:grid md:grid-cols-2 md:gap-10">
+                <div>
+                  <Label>What they said</Label>
+                  <ul>
+                    {synthesis.statedPreferences.map((item, i) => (
+                      <li
+                        key={i}
+                        className="border-t border-ink-300 py-2 font-sans text-[15px] leading-[24px] text-ink-700"
+                      >
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="mt-6 md:mt-0">
+                  <Label>What their behavior revealed</Label>
+                  <ul>
+                    {synthesis.revealedPreferences.map((item, i) => (
+                      <li
+                        key={i}
+                        className="border-t border-ink-300 py-2 font-sans text-[15px] leading-[24px] text-ink-700"
+                      >
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               </div>
+            </section>
+            <Rule className="mt-8" />
 
-              {/* Themes */}
-              <div className="bg-stone-800/50 rounded-xl border border-stone-700 p-6">
-                <h3 className="font-semibold text-white mb-4 flex items-center gap-2">
-                  <Lightbulb size={18} className="text-stone-400" />
-                  Key Themes
-                </h3>
-
-                <div className="space-y-3">
-                  {synthesis.themes.map((theme, i) => (
-                    <div key={i} className="border-b border-stone-700 pb-3 last:border-0">
-                      <div className="font-medium text-stone-100">{theme.theme}</div>
-                      <div className="text-sm text-stone-400 mt-1">{theme.evidence}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
+            {/* Key Themes */}
+            <section>
+              <h3 className="font-sans text-[15px] font-semibold text-ink-900">Key Themes</h3>
+              <ul className="mt-4">
+                {synthesis.themes.map((theme, i) => {
+                  const view = resolveThemeEvidence(theme, interviewHistory);
+                  return (
+                    <li key={i} className="border-t border-ink-300 py-4">
+                      <p className="font-sans text-[15px] font-medium text-ink-900">
+                        {theme.theme}
+                        {view.kind === 'refs'
+                          ? view.entries.map((entry, j) =>
+                              entry.match.status === 'verified' ? (
+                                <Citation
+                                  key={j}
+                                  label={`t.${entry.ref.turnIndex}`}
+                                  open={isNoteOpen(i, j)}
+                                  onOpenChange={(next) => setNoteOpen(i, j, next)}
+                                  className="ml-1"
+                                >
+                                  <span className="block text-[19px] leading-[31px] text-ink-900">
+                                    {`“${entry.quotedFromRecord}”`}
+                                  </span>
+                                  <Coordinate className="mt-2 block">
+                                    {`Participant · turn ${entry.ref.turnIndex}`}
+                                  </Coordinate>
+                                </Citation>
+                              ) : null
+                            )
+                          : null}
+                      </p>
+                      {view.kind === 'legacy' ? (
+                        <Verbatim
+                          as="p"
+                          className="mt-2 max-w-measure border-l border-ink-300 pl-4 text-[17px] leading-[28px] text-ink-700"
+                        >
+                          {view.text}
+                        </Verbatim>
+                      ) : null}
+                      {view.kind === 'refs'
+                        ? view.entries
+                            .filter((entry) => entry.match.status !== 'verified')
+                            .map((entry, j) => (
+                              <Verbatim
+                                key={j}
+                                as="p"
+                                className="mt-2 max-w-measure border-l border-ink-300 pl-4 text-[17px] leading-[28px] text-ink-700"
+                              >
+                                {entry.ref.quote}
+                              </Verbatim>
+                            ))
+                        : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
 
             {/* Contradictions */}
             {synthesis.contradictions.length > 0 && (
-              <div className="bg-stone-800 border border-stone-600 rounded-xl p-6">
-                <h3 className="font-semibold text-stone-200 mb-3 flex items-center gap-2">
-                  <AlertTriangle size={18} className="text-stone-400" />
-                  Potential Contradictions
-                </h3>
-                <ul className="space-y-2">
+              <section className="border-t border-ink-300 pt-5">
+                <h3 className="font-sans text-[15px] font-semibold text-ink-900">Potential Contradictions</h3>
+                <ul className="mt-3 space-y-2">
                   {synthesis.contradictions.map((c, i) => (
-                    <li key={i} className="text-stone-300 text-sm">
+                    <li key={i} className="max-w-measure font-sans text-[15px] leading-[24px] text-ink-700">
                       {c}
                     </li>
                   ))}
                 </ul>
-              </div>
+              </section>
             )}
 
-            {/* Key Insights */}
-            <div className="bg-stone-800/50 rounded-xl border border-stone-700 p-6">
-              <h3 className="font-semibold text-white mb-4">
-                Additional Insights
-              </h3>
-              <ul className="space-y-2">
+            {/* Additional Insights */}
+            <section>
+              <h3 className="font-sans text-[15px] font-semibold text-ink-900">Additional Insights</h3>
+              <ul className="mt-4">
                 {synthesis.keyInsights.map((insight, i) => (
                   <li
                     key={i}
-                    className="flex items-start gap-2 text-stone-300"
+                    className="border-t border-ink-300 py-2 font-sans text-[15px] leading-[24px] text-ink-700"
                   >
-                    <span className="text-stone-500 mt-1">-</span>
                     {insight}
                   </li>
                 ))}
               </ul>
-            </div>
+            </section>
 
             {/* Actions */}
-            <div className="flex gap-3 pt-4">
-              <button
-                onClick={handleBack}
-                className="px-6 py-3 border border-stone-600 text-stone-400 rounded-xl hover:bg-stone-700 transition-colors flex items-center gap-2"
-              >
-                <ArrowLeft size={18} /> Continue Interview
-              </button>
-              <button
-                onClick={handleExport}
-                className="flex-1 py-3 bg-stone-600 hover:bg-stone-500 text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2"
-              >
-                Export Data <ArrowRight size={18} />
-              </button>
+            <div className="flex flex-col gap-3 pt-4 sm:flex-row">
+              <Button variant="quiet" onClick={handleBack}>
+                {viewMode === 'preview' ? 'Continue preview' : 'Continue Interview'}
+              </Button>
+              <Button variant="primary" onClick={handleExport}>
+                {viewMode === 'preview' ? 'Export preview data' : 'Export Data'}
+              </Button>
             </div>
-          </motion.div>
+          </div>
         ) : analysisError ? (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="bg-stone-800/50 rounded-xl border border-stone-700 p-12 text-center"
-          >
-            <div className="w-16 h-16 rounded-full bg-red-900/30 flex items-center justify-center mx-auto mb-4">
-              <AlertTriangle size={32} className="text-red-400" />
-            </div>
-            <h2 className="text-xl font-semibold text-white mb-2">
-              Analysis Failed
-            </h2>
-            <p className="text-stone-400 mb-6">
+          <div>
+            <h2 className="font-sans text-[18px] font-semibold text-ink-900">Analysis Failed</h2>
+            <p className="mt-2 font-sans text-[15px] text-ink-700">
               There was an error analyzing the interview. Please try again.
             </p>
-            <div className="flex gap-3 justify-center">
-              <button
-                onClick={handleBack}
-                className="px-6 py-3 border border-stone-600 text-stone-400 rounded-xl hover:bg-stone-700 transition-colors"
-              >
+            <div className="mt-6 flex gap-3">
+              <Button variant="quiet" onClick={handleBack}>
                 Back to Interview
-              </button>
-              <button
-                onClick={handleRetryAnalysis}
-                className="px-6 py-3 bg-stone-600 hover:bg-stone-500 text-white font-medium rounded-xl transition-colors flex items-center gap-2"
-              >
-                <RefreshCw size={18} />
+              </Button>
+              <Button variant="primary" onClick={handleRetryAnalysis}>
                 Retry Analysis
-              </button>
+              </Button>
             </div>
-          </motion.div>
+          </div>
         ) : (
-          <div className="bg-stone-800/50 rounded-xl border border-stone-700 p-12 text-center">
-            <p className="text-stone-400">
+          <div>
+            <p className="font-sans text-[15px] text-ink-500">
               No interview data to analyze yet.
             </p>
-            <button
-              onClick={handleBack}
-              className="mt-4 px-6 py-2 bg-stone-600 text-white rounded-lg"
-            >
+            <Button variant="primary" onClick={handleBack} className="mt-4">
               Go to Interview
-            </button>
+            </Button>
           </div>
         )}
-      </div>
-    </div>
+      </Page>
+    </main>
   );
 };
 

@@ -2,25 +2,14 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '@/store';
 import {
   generateInterviewResponse,
   getInterviewGreeting
-} from '@/services/geminiService';
-import { saveCompletedInterview, buildInterviewRecord } from '@/services/storageService';
+} from '@/services/interviewApi';
 import { InterviewMessage, InterviewPhase } from '@/types';
 import ReactMarkdown from 'react-markdown';
-import {
-  Send,
-  Loader2,
-  Bot,
-  ArrowRight,
-  MessageSquare,
-  CheckCircle,
-  AlertTriangle,
-  User
-} from 'lucide-react';
+import { Button, Turn } from '@/components/ui';
 
 // Phase display labels
 const phaseLabels: Record<InterviewPhase, string> = {
@@ -35,14 +24,9 @@ const InterviewChat: React.FC = () => {
   const router = useRouter();
   const {
     studyConfig,
-    viewMode,
     participantProfile,
     questionProgress,
     interviewHistory,
-    behaviorData,
-    synthesis,
-    saveStatus,
-    setSaveStatus,
     addMessage,
     setStep,
     isAiThinking,
@@ -54,14 +38,26 @@ const InterviewChat: React.FC = () => {
     completeInterview,
     updateProfileField,
     setProfileRawContext,
-    participantToken
+    participantSessionHandle,
+    viewMode
   } = useStore();
 
   const [input, setInput] = useState('');
   const [showFinishOption, setShowFinishOption] = useState(false);
-  const greetingFetchedRef = useRef(false);
+  const [initError, setInitError] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const mountedRef = useRef(true);
+  const greetingStartedRef = useRef(false);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // Scroll to bottom on new messages
   useEffect(() => {
@@ -75,47 +71,48 @@ const InterviewChat: React.FC = () => {
     }
   }, [questionProgress.currentPhase]);
 
-  // Persist the interview the moment it completes, independent of synthesis.
-  // This guarantees the raw transcript is saved even if synthesis later fails
-  // (e.g. the AI provider is overloaded). The synthesis screen upserts the
-  // same record with the analysis attached once it succeeds.
+  // Autogrow fallback: `.input-verbatim` sets `field-sizing: content` for
+  // browsers that support it. Where that's unsupported, size the textarea
+  // from its scrollHeight instead, clamped to the same ~40vh cap.
   useEffect(() => {
-    if (!questionProgress.isComplete || !studyConfig) return;
-    if (saveStatus !== 'idle') return; // only attempt the initial save once
+    const el = textareaRef.current;
+    if (!el) return;
+    const supportsFieldSizing =
+      typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports('field-sizing', 'content');
+    if (supportsFieldSizing) return;
 
-    const persistTranscript = async () => {
-      setSaveStatus('saving');
-      const record = buildInterviewRecord({
-        studyConfig,
-        participantProfile,
-        transcript: interviewHistory,
-        behaviorData,
-        synthesis
-      });
-      const result = await saveCompletedInterview(record, participantToken);
-      setSaveStatus(result.success ? 'saved' : 'failed');
+    const resize = () => {
+      el.style.height = 'auto';
+      const maxHeight = window.innerHeight * 0.4;
+      el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
     };
 
-    persistTranscript();
-    // Only react to completion flipping true; other values are read at that moment.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [questionProgress.isComplete]);
+    resize();
+    window.addEventListener('resize', resize);
+    return () => window.removeEventListener('resize', resize);
+  }, [input]);
 
-  // Initialize with greeting - use ref to prevent double-fetch
+  // Initialize with greeting. The started ref must live outside this effect so a
+  // re-run (history length, config identity) cannot cancel an in-flight request
+  // and leave Thinking stuck.
   useEffect(() => {
-    if (!studyConfig) return;
-    if (greetingFetchedRef.current) return;
-    
-    // Only fetch greeting if there are no AI messages yet
-    const hasAiMessage = interviewHistory.some(m => m.role === 'ai');
-    if (hasAiMessage) return;
+    if (!studyConfig || greetingStartedRef.current || interviewHistory.length > 0) {
+      return;
+    }
 
-    greetingFetchedRef.current = true;
+    greetingStartedRef.current = true;
+    setInitError(null);
+    setAiThinking(true);
 
-    const fetchGreeting = async () => {
-      setAiThinking(true);
+    const initialize = async () => {
       try {
-        const greeting = await getInterviewGreeting(studyConfig, participantToken);
+        const greeting = await getInterviewGreeting(
+          studyConfig,
+          viewMode === 'preview',
+          participantSessionHandle
+        );
+        if (!mountedRef.current) return;
+
         const msg: InterviewMessage = {
           id: `msg-${Date.now()}`,
           role: 'ai',
@@ -124,27 +121,23 @@ const InterviewChat: React.FC = () => {
         };
         addMessage(msg);
       } catch (error) {
-        console.error('Error fetching greeting:', error);
-        // Add fallback greeting so interview can still start
-        const fallbackMsg: InterviewMessage = {
-          id: `msg-${Date.now()}`,
-          role: 'ai',
-          content: `Welcome to the ${studyConfig.name} study! Thank you for participating. To get started, could you tell me a bit about yourself?`,
-          timestamp: Date.now()
-        };
-        addMessage(fallbackMsg);
+        console.error('Error initializing interview:', error);
+        if (!mountedRef.current) return;
+        greetingStartedRef.current = false;
+        setInitError('The interviewer could not start. This is not an AI reply — please try again.');
       } finally {
-        setAiThinking(false);
+        if (mountedRef.current) setAiThinking(false);
       }
     };
 
-    fetchGreeting();
-  }, [studyConfig]);
+    void initialize();
+  }, [studyConfig, interviewHistory.length, participantSessionHandle, viewMode, addMessage, setAiThinking]);
 
   const handleSend = async (textOverride?: string) => {
     const text = textOverride || input;
     if (!text.trim() || !studyConfig) return;
 
+    // Add user message
     const userMsg: InterviewMessage = {
       id: `msg-${Date.now()}`,
       role: 'user',
@@ -153,7 +146,12 @@ const InterviewChat: React.FC = () => {
     };
     addMessage(userMsg);
     setInput('');
+    setSendError(null);
+
+    // Also save to context
     appendContext(text, 'text');
+
+    // Generate AI response
     setAiThinking(true);
 
     try {
@@ -166,13 +164,19 @@ const InterviewChat: React.FC = () => {
         participantProfile,
         questionProgress,
         currentContext,
-        participantToken
+        viewMode === 'preview',
+        participantSessionHandle
       );
 
+      if (!mountedRef.current) return;
+
+      // Handle profile updates
       if (response.profileUpdates && response.profileUpdates.length > 0) {
         response.profileUpdates.forEach(update => {
           updateProfileField(update.fieldId, update.value, update.status);
         });
+
+        // Update raw context with user's background info
         if (questionProgress.currentPhase === 'background') {
           const existingContext = participantProfile?.rawContext || '';
           const newContext = existingContext + (existingContext ? '\n' : '') + text;
@@ -180,14 +184,17 @@ const InterviewChat: React.FC = () => {
         }
       }
 
+      // Handle phase transition
       if (response.phaseTransition) {
         setInterviewPhase(response.phaseTransition);
       }
 
+      // Handle question progress
       if (response.questionAddressed !== null && response.questionAddressed !== undefined) {
         markQuestionAsked(response.questionAddressed);
       }
 
+      // Add AI message
       const aiMsg: InterviewMessage = {
         id: `msg-${Date.now()}`,
         role: 'ai',
@@ -196,21 +203,59 @@ const InterviewChat: React.FC = () => {
       };
       addMessage(aiMsg);
 
+      // Handle interview conclusion
       if (response.shouldConclude) {
         completeInterview();
       }
     } catch (error) {
       console.error('Error generating response:', error);
-      const errorMsg: InterviewMessage = {
-        id: `msg-${Date.now()}`,
-        role: 'ai',
-        content: "I appreciate you sharing that. Could you tell me more?",
-        timestamp: Date.now()
-      };
-      addMessage(errorMsg);
+      if (!mountedRef.current) return;
+      setSendError('The interviewer could not reply. Please try sending again.');
     } finally {
-      setAiThinking(false);
+      if (mountedRef.current) setAiThinking(false);
     }
+  };
+
+  const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Enter alone inserts a newline (default textarea behavior). Only
+    // Cmd/Ctrl+Enter sends; the Send button is the other way to send.
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      if (!isAiThinking && input.trim()) {
+        void handleSend();
+      }
+    }
+  };
+
+  const handleRetryGreeting = () => {
+    if (!studyConfig || isAiThinking || interviewHistory.length > 0) return;
+    greetingStartedRef.current = false;
+    setInitError(null);
+    greetingStartedRef.current = true;
+    setAiThinking(true);
+    void (async () => {
+      try {
+        const greeting = await getInterviewGreeting(
+          studyConfig,
+          viewMode === 'preview',
+          participantSessionHandle
+        );
+        if (!mountedRef.current) return;
+        addMessage({
+          id: `msg-${Date.now()}`,
+          role: 'ai',
+          content: greeting,
+          timestamp: Date.now()
+        });
+      } catch (error) {
+        console.error('Error initializing interview:', error);
+        if (!mountedRef.current) return;
+        greetingStartedRef.current = false;
+        setInitError('The interviewer could not start. This is not an AI reply — please try again.');
+      } finally {
+        if (mountedRef.current) setAiThinking(false);
+      }
+    })();
   };
 
   const handleFinishEarly = () => {
@@ -224,16 +269,18 @@ const InterviewChat: React.FC = () => {
 
   if (!studyConfig) {
     return (
-      <div className="min-h-screen bg-stone-900 flex items-center justify-center">
-        <p className="text-stone-400">No study configured.</p>
+      <div className="flex min-h-dvh items-center justify-center bg-paper-0">
+        <p className="text-ink-500">No study configured.</p>
       </div>
     );
   }
 
+  // Calculate progress
   const totalQuestions = studyConfig.coreQuestions.length;
   const questionsCompleted = questionProgress.questionsAsked.length;
   const isComplete = questionProgress.isComplete;
 
+  // Progress display
   const getProgressDisplay = () => {
     if (questionProgress.currentPhase === 'background') {
       return phaseLabels['background'];
@@ -245,160 +292,119 @@ const InterviewChat: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-stone-900">
-      {/* Header */}
-      <div className="h-16 flex items-center justify-between px-6 border-b border-stone-700 bg-stone-900/80 backdrop-blur-md">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-stone-700 flex items-center justify-center">
-            <MessageSquare size={16} className="text-stone-300" />
-          </div>
-          <div>
-            <h1 className="font-semibold text-white">{studyConfig.name}</h1>
-            <p className="text-xs text-stone-500">{getProgressDisplay()}</p>
-          </div>
+    <div className="flex h-dvh flex-col bg-paper-0">
+      {/* Running head */}
+      <header className="sticky top-0 z-10 flex min-h-16 items-center justify-between gap-3 border-b border-ink-300 bg-paper-0 px-4 py-2 sm:px-6">
+        <div className="min-w-0">
+          <h1 className="truncate font-sans text-[15px] font-semibold text-ink-900">{studyConfig.name}</h1>
+          <p className="text-[13px] text-ink-500">{getProgressDisplay()}</p>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-1.5">
-            {Array.from({ length: totalQuestions }).map((_, i) => (
-              <div
-                key={i}
-                className={`w-2 h-2 rounded-full transition-colors ${
-                  questionProgress.questionsAsked.includes(i)
-                    ? 'bg-stone-400'
-                    : 'bg-stone-700'
-                }`}
-              />
-            ))}
-          </div>
-          {showFinishOption && !isComplete && (
-            <button
-              onClick={handleFinishEarly}
-              className="text-xs text-stone-500 hover:text-stone-400 transition-colors"
-            >
-              Finish early
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-stone-900">
-        <AnimatePresence>
-          {interviewHistory.map((msg) => (
-            <motion.div
-              key={msg.id}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-            >
-              <div
-                className={`max-w-[80%] rounded-2xl p-4 ${
-                  msg.role === 'user'
-                    ? 'bg-stone-700 text-white rounded-br-md'
-                    : 'bg-stone-800 border border-stone-700 text-stone-100 rounded-bl-md'
-                }`}
-              >
-                {msg.role === 'ai' && (
-                  <div className="flex items-center gap-2 mb-2 text-xs text-stone-500">
-                    <Bot size={14} />
-                    Interviewer
-                  </div>
-                )}
-                {msg.role === 'user' && (
-                  <div className="flex items-center gap-2 mb-2 text-xs text-stone-400 justify-end">
-                    You
-                    <User size={14} />
-                  </div>
-                )}
-                <div className="prose prose-sm max-w-none prose-invert">
-                  <ReactMarkdown>{msg.content}</ReactMarkdown>
-                </div>
-              </div>
-            </motion.div>
-          ))}
-        </AnimatePresence>
-
-        {isAiThinking && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="flex justify-start"
+        {showFinishOption && !isComplete && (
+          <button
+            type="button"
+            onClick={handleFinishEarly}
+            className="shrink-0 text-[13px] text-ink-500 underline-offset-2 hover:text-ink-700 hover:underline"
           >
-            <div className="bg-stone-800 border border-stone-700 rounded-2xl rounded-bl-md p-4">
-              <div className="flex items-center gap-2 text-stone-400 text-sm">
-                <Loader2 size={16} className="animate-spin" />
-                Thinking...
-              </div>
-            </div>
-          </motion.div>
+            Finish early
+          </button>
         )}
+      </header>
 
-        <div ref={messagesEndRef} />
+      {/* Transcript */}
+      {/* `relative` keeps the absolutely-positioned sr-only speaker prefixes inside
+          this scroll container — without it they resolve against the body and
+          inflate the document's scroll height. */}
+      <div role="log" aria-live="polite" className="relative min-h-0 flex-1 overflow-y-auto bg-paper-0">
+        <div className="mx-auto max-w-measure space-y-8 px-4 py-8">
+          {interviewHistory.map((msg) => (
+            <Turn key={msg.id} speaker={msg.role === 'ai' ? 'interviewer' : 'participant'}>
+              <span className="sr-only">{msg.role === 'ai' ? 'Interviewer:' : 'You:'} </span>
+              <div className="prose-verbatim">
+                <ReactMarkdown>{msg.content}</ReactMarkdown>
+              </div>
+            </Turn>
+          ))}
+
+          {isAiThinking && (
+            <div role="status">
+              <div className="h-[2px] overflow-hidden">
+                <div className="composing-bar h-full bg-ink-300" />
+              </div>
+              <p className="mt-2 text-[13px] text-ink-500">Composing a follow-up…</p>
+            </div>
+          )}
+
+          <div ref={messagesEndRef} />
+        </div>
       </div>
 
-      {/* Input or Completion */}
+      {/* Input Area or Completion UI */}
       {isComplete ? (
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="p-6 bg-stone-800 border-t border-stone-700"
-        >
-          <div className="max-w-md mx-auto text-center space-y-4">
-            <div className="w-12 h-12 rounded-full bg-stone-700 flex items-center justify-center mx-auto">
-              {saveStatus === 'failed' ? (
-                <AlertTriangle size={24} className="text-yellow-400" />
-              ) : saveStatus === 'saving' ? (
-                <Loader2 size={24} className="text-stone-300 animate-spin" />
-              ) : (
-                <CheckCircle size={24} className="text-stone-300" />
-              )}
-            </div>
-            <div>
-              <h3 className="text-lg font-semibold text-white">Interview Complete</h3>
-              <p className="text-sm text-stone-400 mt-1">
-                {saveStatus === 'saving'
-                  ? 'Saving your responses…'
-                  : saveStatus === 'saved'
-                  ? 'Your responses have been saved. Thank you for participating.'
-                  : saveStatus === 'failed'
-                  ? "We couldn't save your responses just now. Please let the researcher know before closing this page."
-                  : 'Thank you for participating.'}
-              </p>
-            </div>
-            {/* Analysis is researcher-only — viewed in the dashboard.
-                Participants end here with a thank-you. */}
-            {viewMode === 'researcher' && (
-              <button
-                onClick={handleViewAnalysis}
-                className="px-6 py-3 bg-stone-600 hover:bg-stone-500 text-white font-medium rounded-xl transition-colors flex items-center gap-2 mx-auto"
-              >
-                View Analysis <ArrowRight size={18} />
-              </button>
-            )}
+        <div className="border-t border-ink-300 bg-paper-0 px-6 py-8">
+          <div className="mx-auto max-w-measure space-y-4 text-center">
+            <h3 className="font-sans text-lg font-semibold text-ink-900">
+              {viewMode === 'preview' ? 'Preview conversation complete' : 'Interview conversation complete'}
+            </h3>
+            <p className="text-sm text-ink-500">
+              {viewMode === 'preview'
+                ? 'Continue to generate the preview analysis. Preview responses will not be added to study data.'
+                : 'Your responses have not been saved yet. Continue to finalize and save your interview. Keep this tab open until you see confirmation that it is safe to close.'}
+            </p>
+            <Button type="button" variant="primary" onClick={handleViewAnalysis} className="mx-auto">
+              {viewMode === 'preview' ? 'Continue preview' : 'Continue to save interview'}
+            </Button>
           </div>
-        </motion.div>
+        </div>
       ) : (
-        <div className="p-4 bg-stone-800 border-t border-stone-700">
-          <div className="max-w-3xl mx-auto">
-            <div className="flex gap-3">
-              <input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && !isAiThinking && handleSend()}
-                placeholder="Type your response..."
-                disabled={isAiThinking}
-                className="flex-1 px-4 py-3 bg-stone-900 border border-stone-600 text-stone-100 placeholder-stone-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-stone-500 disabled:opacity-50"
-              />
-              <button
+        <div className="border-t border-ink-300 bg-paper-0 px-4 py-4 sm:px-6">
+          <div className="mx-auto max-w-measure space-y-2">
+            {(initError || sendError) && (
+              <div
+                role="alert"
+                className="flex items-start justify-between gap-3 rounded bg-error px-4 py-3 text-sm text-paper-1"
+              >
+                <p>{initError || sendError}</p>
+                {initError && (
+                  <button
+                    type="button"
+                    onClick={handleRetryGreeting}
+                    disabled={isAiThinking}
+                    className="shrink-0 text-paper-1 underline underline-offset-2 hover:opacity-90 disabled:opacity-50"
+                  >
+                    Try again
+                  </button>
+                )}
+              </div>
+            )}
+            <div className="flex items-end gap-3">
+              <div className="flex-1">
+                <label htmlFor="interview-response" className="sr-only">
+                  Your response
+                </label>
+                <textarea
+                  ref={textareaRef}
+                  id="interview-response"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleTextareaKeyDown}
+                  placeholder="Take as much space as you need."
+                  disabled={isAiThinking}
+                  rows={3}
+                  className="input-verbatim w-full resize-none rounded border border-ink-300 bg-paper-2 px-4 py-3 text-[17px] leading-[1.6] text-ink-900 placeholder:text-ink-500 disabled:opacity-50"
+                />
+              </div>
+
+              <Button
+                type="button"
+                variant="primary"
                 onClick={() => handleSend()}
                 disabled={!input.trim() || isAiThinking}
-                className="p-3 bg-stone-600 hover:bg-stone-500 text-white rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
-                <Send size={20} />
-              </button>
+                Send
+              </Button>
             </div>
+            <p className="text-[12px] text-ink-500 [@media(pointer:coarse)]:hidden">⌘/Ctrl + Enter to send</p>
           </div>
         </div>
       )}
