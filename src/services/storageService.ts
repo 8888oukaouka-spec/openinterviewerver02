@@ -1,7 +1,7 @@
 // Storage Service - Client-side interface for interview storage
 // Calls API routes which interact with Upstash Redis
 
-import { isPendingStudyStub, PendingStudyStub, StoredInterview, StoredStudy, StudyConfig, StudyWorkspaceItem } from '@/types';
+import { isPendingStudyStub, PendingStudyStub, StoredInterview, StoredStudy, StudyConfig, StudyWorkspaceItem, SynthesisResult } from '@/types';
 import { logRequestEvent, logRequestFailure } from '@/lib/requestLog';
 import { buildParticipantOrPreviewHeaders } from '@/services/participantHeaders';
 export { isPendingStudyStub };
