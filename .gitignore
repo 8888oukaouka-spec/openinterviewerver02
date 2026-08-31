@@ -10,13 +10,12 @@ dist
 
 # Testing
 coverage
+playwright-report
+test-results
 
 # Env files
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env*
+!.env.example
 
 # Vercel
 .vercel
@@ -29,6 +28,7 @@ yarn-error.log*
 # IDE
 .idea
 .vscode
+/.claude/
 *.swp
 *.swo
 

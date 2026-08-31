@@ -1,0 +1,172 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.19.0
+          cache: npm
+      - run: npm ci
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Setup tests
+        run: npm run test:setup
+      - name: Validate standalone deployment contract
+        run: npm run setup:check -- --mode standalone --production
+        env:
+          NODE_ENV: production
+          DEPLOYMENT_MODE: standalone
+          AI_TRANSPORT: direct
+          APP_BASE_URL: https://standalone-build.example.org
+          ADMIN_PASSWORD: standalone-build-admin-password
+          SESSION_SECRET: standalone-build-session-secret-1234567890
+          PARTICIPANT_TOKEN_SECRET: standalone-build-participant-secret-1234567890
+          RATE_LIMIT_SALT: standalone-build-rate-limit-salt-1234567890
+          KV_REST_API_URL: https://build-test.upstash.io
+          KV_REST_API_TOKEN: standalone-build-redis-token
+          GEMINI_API_KEY: standalone-build-gemini-key
+      - name: Validate Vercel AI Gateway deployment contract
+        run: npm run setup:check -- --mode standalone --production
+        env:
+          NODE_ENV: production
+          VERCEL: '1'
+          DEPLOYMENT_MODE: standalone
+          AI_TRANSPORT: gateway
+          AI_PROVIDER: gemini
+          APP_BASE_URL: https://gateway-build.example.org
+          ADMIN_PASSWORD: gateway-build-admin-password
+          SESSION_SECRET: gateway-build-session-secret-1234567890
+          PARTICIPANT_TOKEN_SECRET: gateway-build-participant-secret-1234567890
+          RATE_LIMIT_SALT: gateway-build-rate-limit-salt-1234567890
+          KV_REST_API_URL: https://build-test.upstash.io
+          KV_REST_API_TOKEN: gateway-build-redis-token
+      - name: Validate hosted deployment contract
+        run: npm run setup:check -- --mode hosted --production
+        env:
+          NODE_ENV: production
+          DEPLOYMENT_MODE: hosted
+          AI_TRANSPORT: direct
+          APP_BASE_URL: https://hosted-build.example.org
+          SESSION_SECRET: hosted-build-session-secret-1234567890
+          PARTICIPANT_TOKEN_SECRET: hosted-build-participant-secret-1234567890
+          RATE_LIMIT_SALT: hosted-build-rate-limit-salt-1234567890
+          PLATFORM_KV_REST_API_URL: https://build-test.upstash.io
+          PLATFORM_KV_REST_API_TOKEN: hosted-build-platform-token
+          PLATFORM_KEY_PREFIX: build-test
+          PLATFORM_SCHEMA_LINEAGE: v2-clean
+          CREDENTIAL_ENCRYPTION_KEYS: '{"build-test":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}'
+          CREDENTIAL_ENCRYPTION_ACTIVE_KEY_ID: build-test
+          GOOGLE_CLIENT_ID: hosted-build-google-client
+          GOOGLE_CLIENT_SECRET: hosted-build-google-secret
+      - name: Build standalone mode
+        run: npm run build
+        env:
+          DEPLOYMENT_MODE: standalone
+          AI_TRANSPORT: direct
+      - name: Build Vercel AI Gateway mode
+        run: npm run build
+        env:
+          VERCEL: '1'
+          DEPLOYMENT_MODE: standalone
+          AI_TRANSPORT: gateway
+          AI_PROVIDER: gemini
+          APP_BASE_URL: https://gateway-build.example.org
+          ADMIN_PASSWORD: gateway-build-admin-password
+          SESSION_SECRET: gateway-build-session-secret-1234567890
+          PARTICIPANT_TOKEN_SECRET: gateway-build-participant-secret-1234567890
+          RATE_LIMIT_SALT: gateway-build-rate-limit-salt-1234567890
+          KV_REST_API_URL: https://build-test.upstash.io
+          KV_REST_API_TOKEN: gateway-build-redis-token
+      - name: Build hosted mode
+        run: npm run build
+        env:
+          DEPLOYMENT_MODE: hosted
+          AI_TRANSPORT: direct
+          APP_BASE_URL: https://hosted-build.example.org
+          SESSION_SECRET: hosted-build-session-secret-1234567890
+          PARTICIPANT_TOKEN_SECRET: hosted-build-participant-secret-1234567890
+          RATE_LIMIT_SALT: hosted-build-rate-limit-salt-1234567890
+          PLATFORM_KV_REST_API_URL: https://build-test.upstash.io
+          PLATFORM_KV_REST_API_TOKEN: hosted-build-platform-token
+          PLATFORM_KEY_PREFIX: build-test
+          PLATFORM_SCHEMA_LINEAGE: v2-clean
+          CREDENTIAL_ENCRYPTION_KEYS: '{"build-test":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}'
+          CREDENTIAL_ENCRYPTION_ACTIVE_KEY_ID: build-test
+          GOOGLE_CLIENT_ID: hosted-build-google-client
+          GOOGLE_CLIENT_SECRET: hosted-build-google-secret
+
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DEPLOYMENT_MODE: standalone
+      ADMIN_PASSWORD: e2e-test-password
+      SESSION_SECRET: e2e-test-session-secret-not-for-production
+      PARTICIPANT_TOKEN_SECRET: e2e-test-participant-secret-not-for-production
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.19.0
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: playwright-report
+          if-no-files-found: ignore
+
+  redis-crash:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.19.0
+          cache: npm
+      - run: npm ci
+      - name: Real-Redis crash cuts
+        run: npm run test:redis-crash
+        env:
+          REDIS_URL: ''
+
+  adversarial:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.19.0
+          cache: npm
+      - run: npm ci
+      - name: Shared-BYOS adversarial matrix
+        run: npm run test:adversarial
+        env:
+          REDIS_URL: ''

@@ -1,5 +1,6 @@
-// Demo Data for OpenInterviewer
-// Provides realistic example study, interviews, and synthesis for demonstration
+// Authenticated sample-workspace records for OpenInterviewer.
+// This storage-backed fixture is separate from the public, in-memory /demo.
+// Export names and record IDs retain their demo prefix for compatibility.
 
 import {
   StoredStudy,
@@ -9,7 +10,7 @@ import {
   SynthesisResult,
   ParticipantProfile,
   BehaviorData,
-  AggregateSynthesisResult
+  DEFAULT_GEMINI_MODEL,
 } from '@/types';
 
 // ============================================
@@ -17,6 +18,7 @@ import {
 // ============================================
 
 const DEMO_STUDY_ID = 'demo-study-adaptive-self';
+const DEMO_STUDY_REVISION = 1;
 
 export const DEMO_STUDY_CONFIG: StudyConfig = {
   id: DEMO_STUDY_ID,
@@ -46,6 +48,7 @@ export const DEMO_STUDY_CONFIG: StudyConfig = {
   ],
   aiBehavior: 'standard',
   aiProvider: 'gemini',
+  aiModel: DEFAULT_GEMINI_MODEL,
   enableReasoning: true,
   consentText: 'This interview is part of a research study on professional adaptation to AI tools. Your responses will be anonymized and used for research purposes only. The interview takes approximately 15-20 minutes. You may skip any question or end the interview at any time.',
   createdAt: Date.now() - 7 * 24 * 60 * 60 * 1000 // 7 days ago
@@ -57,7 +60,8 @@ export const DEMO_STORED_STUDY: StoredStudy = {
   createdAt: DEMO_STUDY_CONFIG.createdAt,
   updatedAt: Date.now() - 2 * 24 * 60 * 60 * 1000,
   interviewCount: 3,
-  isLocked: true
+  isLocked: true,
+  revision: DEMO_STUDY_REVISION
 };
 
 // ============================================
@@ -111,10 +115,37 @@ const SARAH_SYNTHESIS: SynthesisResult = {
     'Sees AI adoption as competitive differentiation'
   ],
   themes: [
-    { theme: 'Role Elevation', evidence: '"It\'s like I got promoted without changing jobs" - AI enables more strategic focus', frequency: 4 },
-    { theme: 'Skill Tension', evidence: 'Worries about writing feeling "rustier" - capability vs. skill maintenance', frequency: 2 },
-    { theme: 'Team Navigation', evidence: 'Careful not to make slower colleagues "feel slow" - social awareness', frequency: 2 },
-    { theme: 'Competitive Framing', evidence: 'Non-adopters "will get left behind" - AI as professional differentiator', frequency: 3 }
+    {
+      theme: 'Role Elevation',
+      frequency: 4,
+      evidenceRefs: [
+        { quote: "It's like I got promoted without changing jobs.", turnIndex: 8 },
+      ],
+    },
+    {
+      theme: 'Skill Tension',
+      frequency: 2,
+      evidenceRefs: [
+        { quote: "Sometimes I worry I'm losing some muscle.", turnIndex: 10 },
+        { quote: 'my writing used to be really sharp because I did so much of it', turnIndex: 10 },
+      ],
+    },
+    {
+      theme: 'Team Navigation',
+      frequency: 2,
+      evidenceRefs: [
+        { quote: "It creates this weird dynamic where I can turn around work so fast that others can't keep up", turnIndex: 12 },
+        { quote: 'I have to be careful not to make them feel slow.', turnIndex: 12 },
+      ],
+    },
+    {
+      theme: 'Competitive Framing',
+      frequency: 3,
+      evidenceRefs: [
+        { quote: "they'll get left behind", turnIndex: 14 },
+        { quote: 'AI-enabled PMs will just outperform.', turnIndex: 14 },
+      ],
+    },
   ],
   contradictions: [
     'Enthusiastic about AI\'s benefits while expressing concern about losing personal skills',
@@ -158,7 +189,8 @@ export const SARAH_INTERVIEW: StoredInterview = {
   behaviorData: SARAH_BEHAVIOR,
   createdAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
   completedAt: Date.now() - 5 * 24 * 60 * 60 * 1000 + 1200000,
-  status: 'completed'
+  status: 'completed',
+  studyRevision: DEMO_STUDY_REVISION
 };
 
 // ============================================
@@ -259,7 +291,8 @@ export const MARCUS_INTERVIEW: StoredInterview = {
   behaviorData: MARCUS_BEHAVIOR,
   createdAt: Date.now() - 4 * 24 * 60 * 60 * 1000,
   completedAt: Date.now() - 4 * 24 * 60 * 60 * 1000 + 1200000,
-  status: 'completed'
+  status: 'completed',
+  studyRevision: DEMO_STUDY_REVISION
 };
 
 // ============================================
@@ -361,86 +394,8 @@ export const PRIYA_INTERVIEW: StoredInterview = {
   behaviorData: PRIYA_BEHAVIOR,
   createdAt: Date.now() - 3 * 24 * 60 * 60 * 1000,
   completedAt: Date.now() - 3 * 24 * 60 * 60 * 1000 + 1200000,
-  status: 'completed'
-};
-
-// ============================================
-// Demo Aggregate Synthesis
-// ============================================
-
-export const DEMO_AGGREGATE_SYNTHESIS: AggregateSynthesisResult = {
-  studyId: DEMO_STUDY_ID,
-  interviewCount: 3,
-  commonThemes: [
-    {
-      theme: 'Role Evolution from Execution to Judgment',
-      frequency: 3,
-      representativeQuotes: [
-        '"It\'s like I got promoted without changing jobs" - Sarah',
-        '"I provide the taste" - Marcus',
-        '"My job has shifted from writing to editing and refining" - Priya'
-      ]
-    },
-    {
-      theme: 'Skill Atrophy Concerns',
-      frequency: 3,
-      representativeQuotes: [
-        '"My writing used to be really sharp... now it feels rustier" - Sarah',
-        '"I didn\'t spend 15 years mastering Photoshop to have a machine do it" - Marcus\'s colleague',
-        '"I spend more time fixing AI prose than crafting my own" - Priya'
-      ]
-    },
-    {
-      theme: 'Social Navigation Required',
-      frequency: 3,
-      representativeQuotes: [
-        '"I have to be careful not to make them feel slow" - Sarah',
-        '"Junior designers love it... senior peers are really resistant" - Marcus',
-        '"There\'s this unspoken sense of shame" - Priya'
-      ]
-    },
-    {
-      theme: 'Identity Reframing as Adaptation Strategy',
-      frequency: 3,
-      representativeQuotes: [
-        '"PMs who embrace AI will become more like mini-CEOs" - Sarah',
-        '"Designers become more like creative directors" - Marcus',
-        '"Investigative pieces, deeply human stories - that\'s what I want to focus on" - Priya'
-      ]
-    }
-  ],
-  divergentViews: [
-    {
-      topic: 'Emotional Relationship with AI',
-      viewA: 'Sarah: Enthusiastic amplifier - AI as pure capability expansion',
-      viewB: 'Priya: Conflicted user - AI as efficiency gain with authenticity costs'
-    },
-    {
-      topic: 'Path to Adoption',
-      viewA: 'Sarah: Self-driven early adopter, intrinsically motivated',
-      viewB: 'Marcus: Skeptic converted through external push and direct experience'
-    },
-    {
-      topic: 'Transparency Concerns',
-      viewA: 'Sarah & Marcus: Focused on personal capability, not disclosure',
-      viewB: 'Priya: Wrestling with ethical questions about audience trust'
-    }
-  ],
-  keyFindings: [
-    'AI adoption triggers identity renegotiation across all professions studied, with professionals redefining their value from execution to judgment, curation, and strategic thinking',
-    'Even enthusiastic adopters harbor concerns about skill atrophy, suggesting this is a near-universal anxiety regardless of adoption stance',
-    'AI speed differentials create new social dynamics in teams, requiring active management and creating generational tensions',
-    'Different professions face different ethical tensions - creative/media fields especially grapple with authenticity and disclosure questions',
-    'Successful adaptation involves finding new mental models ("I provide the taste," "mini-CEO") that preserve professional identity while incorporating AI capabilities'
-  ],
-  researchImplications: [
-    'Training programs should address both tool proficiency and identity/value reframing',
-    'Organizations need explicit norms around AI disclosure and team dynamics',
-    'Future research should explore how skill atrophy concerns affect long-term career development',
-    'Industry-specific ethical frameworks for AI use may be needed, especially in creative/media fields'
-  ],
-  bottomLine: 'Across three knowledge workers in different fields, AI adoption emerges as fundamentally an identity challenge rather than a skills challenge. All participants successfully use AI tools, but their deeper work involves redefining professional value and navigating social and ethical complexities. The enthusiastic (Sarah), converted skeptic (Marcus), and ethically conflicted (Priya) represent different positions on a shared journey of professional redefinition in the AI age.',
-  generatedAt: Date.now() - 1 * 24 * 60 * 60 * 1000
+  status: 'completed',
+  studyRevision: DEMO_STUDY_REVISION
 };
 
 // ============================================

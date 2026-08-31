@@ -1,54 +1,86 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { StoredStudy } from '@/types';
-import { getAllStudies, deleteStudy } from '@/services/storageService';
+import { isPendingStudyStub, StudyWorkspaceItem } from '@/types';
 import {
-  Loader2,
-  Plus,
-  BookOpen,
-  Users,
-  Calendar,
-  Lock,
-  Unlock,
-  Trash2,
-  Eye,
-  Link as LinkIcon,
-  MoreVertical,
-  LogOut,
-  AlertTriangle,
-  Database,
-  Sparkles
-} from 'lucide-react';
+  deleteStudy,
+  getAllStudies,
+  reconcileStudyOperations,
+} from '@/services/storageService';
+import { Button, Coordinate, Label, Measure, Rule } from '@/components/ui';
 
-const StudyList: React.FC = () => {
+export default function StudyList() {
   const router = useRouter();
-  const [studies, setStudies] = useState<StoredStudy[]>([]);
+  const [studies, setStudies] = useState<StudyWorkspaceItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [kvWarning, setKvWarning] = useState<string | null>(null);
-  const [loadingDemo, setLoadingDemo] = useState(false);
-  const [demoMessage, setDemoMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-
-  useEffect(() => {
-    loadStudies();
-  }, []);
+  const [loadingSample, setLoadingSample] = useState(false);
+  const [sampleMessage, setSampleMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [hostedMode, setHostedMode] = useState(false);
+  const [operationNotice, setOperationNotice] = useState<string | null>(null);
+  const [isReconciling, setIsReconciling] = useState(false);
+  const actionsTriggerRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
   const loadStudies = async () => {
     setLoading(true);
     try {
-      const { studies: data, warning } = await getAllStudies();
+      const { studies: data, pendingStudies, warning, outcome } = await getAllStudies();
       setStudies(data);
-      setKvWarning(warning || null);
+      setKvWarning(warning || (outcome.status !== 'ok' ? outcome.error : null));
+      if (pendingStudies && pendingStudies.length > 0) {
+        setOperationNotice(
+          `${pendingStudies.length} study operation(s) are awaiting reconciliation.`,
+        );
+      }
     } catch (error) {
       console.error('Error loading studies:', error);
     } finally {
       setLoading(false);
     }
   };
+
+  const runReconciliation = async () => {
+    setIsReconciling(true);
+    const result = await reconcileStudyOperations();
+    if (!result.success) {
+      setOperationNotice(result.error || 'Study reconciliation is temporarily unavailable.');
+    } else if (result.stillPending > 0) {
+      setOperationNotice(
+        `${result.stillPending} study operation(s) are still inside the safety window. Retry shortly.`
+      );
+    } else if (result.completed > 0 || result.rolledBack > 0) {
+      setOperationNotice('Pending study changes were reconciled successfully.');
+    } else {
+      setOperationNotice(null);
+    }
+    setIsReconciling(false);
+    await loadStudies();
+  };
+
+  useEffect(() => {
+    const initializeWorkspace = async () => {
+      let hosted = false;
+      try {
+        const response = await fetch('/api/config/mode');
+        const data = await response.json();
+        hosted = data.mode === 'hosted';
+      } catch {
+        hosted = false;
+      }
+      setHostedMode(hosted);
+      if (hosted) {
+        await runReconciliation();
+      } else {
+        await loadStudies();
+      }
+    };
+    void initializeWorkspace();
+    // Workspace initialization is intentionally a once-per-mount recovery gate.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleDelete = async (id: string) => {
     if (!confirm('Are you sure you want to delete this study? This cannot be undone.')) {
@@ -60,6 +92,8 @@ const StudyList: React.FC = () => {
       const result = await deleteStudy(id);
       if (result.success) {
         setStudies(studies.filter(s => s.id !== id));
+      } else if (result.pending) {
+        setOperationNotice(result.error || 'Study deletion is awaiting reconciliation.');
       } else {
         alert(result.error || 'Failed to delete study');
       }
@@ -72,64 +106,55 @@ const StudyList: React.FC = () => {
     }
   };
 
-  const handleLogout = async () => {
-    try {
-      await fetch('/api/auth', { method: 'DELETE' });
-      router.push('/login');
-    } catch (error) {
-      console.error('Logout error:', error);
-    }
-  };
-
-  const handleLoadDemo = async () => {
-    setLoadingDemo(true);
-    setDemoMessage(null);
+  const handleLoadSample = async () => {
+    setLoadingSample(true);
+    setSampleMessage(null);
     try {
       const response = await fetch('/api/demo/seed', { method: 'POST' });
       const data = await response.json();
 
       if (response.ok) {
-        setDemoMessage({
+        setSampleMessage({
           type: 'success',
-          text: `Demo data loaded: ${data.data.studiesSeeded} study, ${data.data.interviewsSeeded} interviews`
+          text: `Sample workspace loaded: ${data.data.studiesSeeded} study, ${data.data.interviewsSeeded} interviews`
         });
         await loadStudies(); // Refresh the list
       } else {
-        setDemoMessage({ type: 'error', text: data.error || 'Failed to load demo data' });
+        setSampleMessage({ type: 'error', text: data.error || 'Failed to load sample workspace' });
       }
     } catch (error) {
-      console.error('Error loading demo:', error);
-      setDemoMessage({ type: 'error', text: 'Failed to load demo data' });
+      console.error('Error loading sample workspace:', error);
+      setSampleMessage({ type: 'error', text: 'Failed to load sample workspace' });
     } finally {
-      setLoadingDemo(false);
+      setLoadingSample(false);
     }
   };
 
-  const handleClearDemo = async () => {
-    if (!confirm('Are you sure you want to clear all demo data?')) return;
+  const handleClearSample = async () => {
+    if (!confirm('Clear the synthetic sample study and interviews from this workspace?')) return;
 
-    setLoadingDemo(true);
-    setDemoMessage(null);
+    setLoadingSample(true);
+    setSampleMessage(null);
     try {
       const response = await fetch('/api/demo/seed', { method: 'DELETE' });
       const data = await response.json();
 
       if (response.ok) {
-        setDemoMessage({ type: 'success', text: 'Demo data cleared' });
+        setSampleMessage({ type: 'success', text: 'Sample workspace cleared' });
         await loadStudies(); // Refresh the list
       } else {
-        setDemoMessage({ type: 'error', text: data.error || 'Failed to clear demo data' });
+        setSampleMessage({ type: 'error', text: data.error || 'Failed to clear sample workspace' });
       }
     } catch (error) {
-      console.error('Error clearing demo:', error);
-      setDemoMessage({ type: 'error', text: 'Failed to clear demo data' });
+      console.error('Error clearing sample workspace:', error);
+      setSampleMessage({ type: 'error', text: 'Failed to clear sample workspace' });
     } finally {
-      setLoadingDemo(false);
+      setLoadingSample(false);
     }
   };
 
-  // Check if demo data exists
-  const hasDemoData = studies.some(s => s.id.startsWith('demo-'));
+  // Historical records keep their demo-prefixed IDs for compatibility.
+  const hasSampleData = studies.some(s => s.id.startsWith('demo-'));
 
   const formatDate = (timestamp: number) => {
     return new Date(timestamp).toLocaleDateString('en-US', {
@@ -139,277 +164,276 @@ const StudyList: React.FC = () => {
     });
   };
 
+  const handleTbodyKeyDown = (event: KeyboardEvent<HTMLTableSectionElement>) => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    const buttons = Array.from(
+      event.currentTarget.querySelectorAll<HTMLButtonElement>('[data-row-primary]')
+    );
+    const currentIndex = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    if (currentIndex === -1) return;
+    const nextIndex = event.key === 'ArrowDown' ? currentIndex + 1 : currentIndex - 1;
+    if (nextIndex < 0 || nextIndex >= buttons.length) return;
+    event.preventDefault();
+    buttons[nextIndex]?.focus();
+  };
+
   return (
-    <div className="min-h-screen bg-stone-900 p-8">
-      <div className="max-w-5xl mx-auto">
-        {/* Header */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mb-8"
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-stone-700 flex items-center justify-center">
-                <BookOpen className="text-stone-300" size={20} />
-              </div>
-              <div>
-                <h1 className="text-3xl font-bold text-white">My Studies</h1>
-                <p className="text-stone-400">
-                  {studies.length} {studies.length === 1 ? 'study' : 'studies'}
-                </p>
-              </div>
-            </div>
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => router.push('/setup')}
-                className="px-4 py-2 text-sm bg-stone-600 hover:bg-stone-500 text-white rounded-xl transition-colors flex items-center gap-2"
-              >
-                <Plus size={16} />
-                Create Study
-              </button>
-              <button
-                onClick={() => router.push('/dashboard')}
-                className="px-4 py-2 text-sm bg-stone-700 hover:bg-stone-600 text-stone-300 rounded-xl transition-colors flex items-center gap-2"
-              >
-                <Users size={16} />
-                All Interviews
-              </button>
-              {hasDemoData ? (
-                <button
-                  onClick={handleClearDemo}
-                  disabled={loadingDemo}
-                  className="px-4 py-2 text-sm border border-amber-700/50 text-amber-400 hover:bg-amber-900/30 rounded-xl transition-colors flex items-center gap-2 disabled:opacity-50"
-                >
-                  {loadingDemo ? <Loader2 size={16} className="animate-spin" /> : <Database size={16} />}
-                  Clear Demo
-                </button>
-              ) : (
-                <button
-                  onClick={handleLoadDemo}
-                  disabled={loadingDemo || !!kvWarning}
-                  className="px-4 py-2 text-sm border border-purple-700/50 text-purple-400 hover:bg-purple-900/30 rounded-xl transition-colors flex items-center gap-2 disabled:opacity-50"
-                >
-                  {loadingDemo ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-                  Load Demo
-                </button>
-              )}
-              <button
-                onClick={handleLogout}
-                className="px-4 py-2 text-sm border border-stone-600 text-stone-400 hover:bg-stone-700 rounded-xl transition-colors flex items-center gap-2"
-              >
-                <LogOut size={16} />
-                Logout
-              </button>
-            </div>
-          </div>
-        </motion.div>
-
-        {/* KV Warning Banner */}
-        {kvWarning && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mb-6 bg-amber-900/30 border border-amber-700/50 rounded-xl p-4 flex items-start gap-3"
-          >
-            <AlertTriangle size={20} className="text-amber-400 flex-shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <h4 className="font-medium text-amber-300 mb-1">Storage Not Configured</h4>
-              <p className="text-sm text-amber-400/80">{kvWarning}</p>
-              <p className="text-sm text-amber-400/60 mt-2">
-                See the README for setup instructions using Vercel KV (Upstash Redis).
-              </p>
-            </div>
-          </motion.div>
-        )}
-
-        {/* Demo Message Banner */}
-        {demoMessage && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className={`mb-6 rounded-xl p-4 flex items-center gap-3 ${
-              demoMessage.type === 'success'
-                ? 'bg-green-900/30 border border-green-700/50'
-                : 'bg-red-900/30 border border-red-700/50'
-            }`}
-          >
-            {demoMessage.type === 'success' ? (
-              <Sparkles size={20} className="text-green-400 flex-shrink-0" />
-            ) : (
-              <AlertTriangle size={20} className="text-red-400 flex-shrink-0" />
-            )}
-            <p className={`text-sm ${demoMessage.type === 'success' ? 'text-green-300' : 'text-red-300'}`}>
-              {demoMessage.text}
-            </p>
-            <button
-              onClick={() => setDemoMessage(null)}
-              className="ml-auto text-stone-500 hover:text-stone-300"
+    <div>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="font-sans text-[24px] leading-[32px] font-semibold text-ink-900">My Studies</h1>
+          <p className="text-[13px] text-ink-500">
+            {studies.length} {studies.length === 1 ? 'study' : 'studies'}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2 sm:justify-end">
+          <Button type="button" variant="primary" onClick={() => router.push('/setup')}>
+            Create Study
+          </Button>
+          {hasSampleData ? (
+            <Button type="button" variant="quiet" onClick={() => void handleClearSample()} disabled={loadingSample}>
+              Clear Sample
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              variant="quiet"
+              onClick={() => void handleLoadSample()}
+              disabled={loadingSample || !!kvWarning}
             >
-              ×
-            </button>
-          </motion.div>
-        )}
-
-        {/* Content */}
-        {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <Loader2 size={48} className="animate-spin text-stone-400" />
-          </div>
-        ) : studies.length === 0 ? (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-stone-800/50 rounded-2xl border border-stone-700 p-12 text-center"
-          >
-            <div className="w-16 h-16 rounded-full bg-stone-800 flex items-center justify-center mx-auto mb-4">
-              <BookOpen size={32} className="text-stone-500" />
-            </div>
-            <h2 className="text-xl font-semibold text-white mb-2">No Studies Yet</h2>
-            <p className="text-stone-400 mb-6">
-              Create your first study or load demo data to explore the platform.
-            </p>
-            <div className="flex items-center justify-center gap-4">
-              <button
-                onClick={() => router.push('/setup')}
-                className="px-6 py-3 bg-stone-600 hover:bg-stone-500 text-white rounded-xl transition-colors flex items-center gap-2"
-              >
-                <Plus size={18} />
-                Create Study
-              </button>
-              {!kvWarning && (
-                <button
-                  onClick={handleLoadDemo}
-                  disabled={loadingDemo}
-                  className="px-6 py-3 border border-purple-700/50 text-purple-400 hover:bg-purple-900/30 rounded-xl transition-colors flex items-center gap-2 disabled:opacity-50"
-                >
-                  {loadingDemo ? (
-                    <Loader2 size={18} className="animate-spin" />
-                  ) : (
-                    <Sparkles size={18} />
-                  )}
-                  Load Demo Data
-                </button>
-              )}
-            </div>
-            {!kvWarning && (
-              <p className="text-stone-500 text-sm mt-4">
-                Demo includes a sample study with 3 completed interviews and AI analysis
-              </p>
-            )}
-          </motion.div>
-        ) : (
-          <div className="grid gap-4 md:grid-cols-2">
-            {studies.map((study, index) => (
-              <motion.div
-                key={study.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.05 }}
-                className="bg-stone-800/50 rounded-xl border border-stone-700 p-6 hover:border-stone-500 transition-colors relative"
-              >
-                {/* Menu button */}
-                <div className="absolute top-4 right-4">
-                  <button
-                    onClick={() => setMenuOpenId(menuOpenId === study.id ? null : study.id)}
-                    className="p-2 text-stone-500 hover:text-stone-400 rounded-lg hover:bg-stone-700"
-                  >
-                    <MoreVertical size={16} />
-                  </button>
-                  {menuOpenId === study.id && (
-                    <div className="absolute right-0 mt-1 w-48 bg-stone-800 border border-stone-700 rounded-xl shadow-lg z-10 overflow-hidden">
-                      <button
-                        onClick={() => {
-                          router.push(`/studies/${study.id}`);
-                          setMenuOpenId(null);
-                        }}
-                        className="w-full px-4 py-2 text-left text-sm text-stone-300 hover:bg-stone-700 flex items-center gap-2"
-                      >
-                        <Eye size={14} />
-                        View Details
-                      </button>
-                      <button
-                        onClick={() => {
-                          // Store study config in sessionStorage for setup page
-                          sessionStorage.setItem('prefillStudyConfig', JSON.stringify(study.config));
-                          router.push(`/setup?prefill=edit&studyId=${study.id}`);
-                          setMenuOpenId(null);
-                        }}
-                        disabled={study.isLocked}
-                        className="w-full px-4 py-2 text-left text-sm text-stone-300 hover:bg-stone-700 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        <LinkIcon size={14} />
-                        Edit & Generate Link
-                      </button>
-                      <button
-                        onClick={() => handleDelete(study.id)}
-                        disabled={deletingId === study.id || study.interviewCount > 0}
-                        className="w-full px-4 py-2 text-left text-sm text-red-400 hover:bg-stone-700 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {deletingId === study.id ? (
-                          <Loader2 size={14} className="animate-spin" />
-                        ) : (
-                          <Trash2 size={14} />
-                        )}
-                        Delete
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                {/* Content */}
-                <div
-                  className="cursor-pointer"
-                  onClick={() => router.push(`/studies/${study.id}`)}
-                >
-                  <div className="flex items-start gap-3 mb-3 pr-8">
-                    <div className="flex-1">
-                      <h3 className="font-semibold text-white text-lg mb-1">
-                        {study.config.name}
-                      </h3>
-                      {study.config.description && (
-                        <p className="text-sm text-stone-400 line-clamp-2">
-                          {study.config.description}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Stats */}
-                  <div className="flex items-center gap-4 text-sm text-stone-500 mb-3">
-                    <div className="flex items-center gap-1">
-                      <Users size={14} />
-                      <span>{study.interviewCount} interviews</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Calendar size={14} />
-                      <span>{formatDate(study.createdAt)}</span>
-                    </div>
-                  </div>
-
-                  {/* Status badges */}
-                  <div className="flex items-center gap-2">
-                    <span className={`px-2 py-1 text-xs rounded-full flex items-center gap-1 ${
-                      study.isLocked
-                        ? 'bg-stone-700 text-stone-400'
-                        : 'bg-green-900/50 text-green-400'
-                    }`}>
-                      {study.isLocked ? <Lock size={10} /> : <Unlock size={10} />}
-                      {study.isLocked ? 'Locked' : 'Editable'}
-                    </span>
-                    <span className="px-2 py-1 text-xs rounded-full bg-stone-700 text-stone-400">
-                      {study.config.coreQuestions.length} questions
-                    </span>
-                  </div>
-                </div>
-              </motion.div>
-            ))}
-          </div>
-        )}
+              Load Sample
+            </Button>
+          )}
+        </div>
       </div>
+
+      <Rule className="my-6" />
+
+      {kvWarning && (
+        <div className="mb-6 border-l-2 border-error bg-paper-2 px-4 py-3">
+          <Label>
+            {kvWarning.toLowerCase().includes('unavailable') ? 'Workspace unavailable' : 'Storage Not Configured'}
+          </Label>
+          <p className="mt-1 text-[13px] text-ink-700">{kvWarning}</p>
+          {!kvWarning.toLowerCase().includes('unavailable') && (
+            <p className="mt-1 text-[13px] text-ink-700">
+              See the README for setup instructions using Upstash Redis.
+            </p>
+          )}
+        </div>
+      )}
+
+      {operationNotice && (
+        <div role="status" className="mb-6 border-l-2 border-error bg-paper-2 px-4 py-3">
+          <Label>Pending reconciliation</Label>
+          <p className="mt-1 text-[13px] text-ink-700">{operationNotice}</p>
+          {hostedMode && (
+            <Button
+              type="button"
+              variant="quiet"
+              onClick={() => void runReconciliation()}
+              disabled={isReconciling}
+              className="mt-2"
+            >
+              Reconcile
+            </Button>
+          )}
+        </div>
+      )}
+
+      {sampleMessage && (
+        <div
+          className={`mb-6 flex items-start gap-3 border-l-2 bg-paper-2 px-4 py-3 ${
+            sampleMessage.type === 'success' ? 'border-success' : 'border-error'
+          }`}
+        >
+          <p className="flex-1 text-[13px] text-ink-700">{sampleMessage.text}</p>
+          <button
+            type="button"
+            onClick={() => setSampleMessage(null)}
+            aria-label="Dismiss message"
+            className="text-ink-500 hover:text-ink-900"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {loading ? (
+        <p className="text-[13px] text-ink-500">Loading studies…</p>
+      ) : studies.length === 0 ? (
+        <Measure>
+          <h2 className="font-sans text-[18px] font-semibold text-ink-900">
+            {kvWarning ? 'Workspace unavailable' : 'No Studies Yet'}
+          </h2>
+          <p className="mt-2 text-[15px] text-ink-700">
+            {kvWarning ? kvWarning : 'Create your first study or load a synthetic sample workspace.'}
+          </p>
+          <div className="mt-4 flex items-center gap-4">
+            {!kvWarning && (
+              <Button type="button" variant="primary" onClick={() => router.push('/setup')}>
+                Create Study
+              </Button>
+            )}
+            {!kvWarning && (
+              <Button type="button" variant="quiet" onClick={() => void handleLoadSample()} disabled={loadingSample}>
+                Load Sample
+              </Button>
+            )}
+          </div>
+          {!kvWarning && (
+            <p className="mt-4 text-[13px] text-ink-500">
+              The sample writes one fictional study, 3 completed interviews, and scripted analysis to your configured storage.
+            </p>
+          )}
+        </Measure>
+      ) : (
+        // `relative` keeps the absolutely-positioned sr-only column header inside
+        // this scroll container (see InterviewChat's transcript for the same fix).
+        <div className="relative overflow-x-auto">
+          <table className="w-full border-collapse text-left">
+            <thead>
+              <tr className="border-b border-ink-300">
+                <th scope="col" className="px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500">
+                  Study
+                </th>
+                <th scope="col" className="px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500">
+                  Interviews
+                </th>
+                <th
+                  scope="col"
+                  className="hidden px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500 md:table-cell"
+                >
+                  Created
+                </th>
+                <th
+                  scope="col"
+                  className="hidden px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500 md:table-cell"
+                >
+                  Questions
+                </th>
+                <th scope="col" className="px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500">
+                  Status
+                </th>
+                <th scope="col" className="px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500">
+                  <span className="sr-only">Actions</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody onKeyDown={handleTbodyKeyDown}>
+              {studies.map((study) => {
+                const pending = isPendingStudyStub(study);
+                const name = pending ? 'Study change pending' : study.config.name;
+                return (
+                  <tr
+                    key={study.id}
+                    className="border-b border-ink-200 hover:bg-paper-1"
+                    onClick={() => router.push(`/studies/${study.id}`)}
+                  >
+                    <td className="px-3 py-3 align-top text-[13px] text-ink-700">
+                      <button
+                        type="button"
+                        data-row-primary
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          router.push(`/studies/${study.id}`);
+                        }}
+                        className="text-left font-sans text-[14px] font-medium text-ink-900 underline-offset-2 hover:text-action hover:underline"
+                      >
+                        {name}
+                      </button>
+                      {pending ? (
+                        <p className="text-[13px] text-ink-500">Reconciliation pending ({study.phase})</p>
+                      ) : study.config.description ? (
+                        <p className="line-clamp-1 text-[13px] text-ink-500">{study.config.description}</p>
+                      ) : null}
+                    </td>
+                    <td className="px-3 py-3 align-top text-[13px] text-ink-700">
+                      <Coordinate>{pending ? 0 : study.interviewCount}</Coordinate>
+                    </td>
+                    <td className="hidden px-3 py-3 align-top text-[13px] text-ink-700 md:table-cell">
+                      <Coordinate>{pending ? '—' : formatDate(study.createdAt)}</Coordinate>
+                    </td>
+                    <td className="hidden px-3 py-3 align-top text-[13px] text-ink-700 md:table-cell">
+                      <Coordinate>{pending ? '—' : study.config.coreQuestions.length}</Coordinate>
+                    </td>
+                    <td className="px-3 py-3 align-top text-[13px] text-ink-700">
+                      {pending ? (
+                        <span className="text-error">Reconciliation pending</span>
+                      ) : (
+                        <span className={study.isLocked ? 'text-ink-500' : 'text-success'}>
+                          {study.isLocked ? 'Locked' : 'Editable'}
+                        </span>
+                      )}
+                    </td>
+                    <td
+                      className="relative px-3 py-3 align-top text-[13px]"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        ref={(el) => {
+                          actionsTriggerRefs.current[study.id] = el;
+                        }}
+                        onClick={() => setMenuOpenId(menuOpenId === study.id ? null : study.id)}
+                        aria-label={`Open actions for ${name}`}
+                        aria-haspopup="menu"
+                        aria-expanded={menuOpenId === study.id}
+                        className="text-[13px] text-ink-500 hover:text-ink-900"
+                      >
+                        Actions
+                      </button>
+                      {menuOpenId === study.id && (
+                        <div
+                          className="absolute right-0 z-10 mt-1 w-48 rounded border border-ink-300 bg-paper-1 shadow-note"
+                          onKeyDown={(event) => {
+                            if (event.key === 'Escape') {
+                              setMenuOpenId(null);
+                              actionsTriggerRefs.current[study.id]?.focus();
+                            }
+                          }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              router.push(`/studies/${study.id}`);
+                              setMenuOpenId(null);
+                            }}
+                            className="block w-full px-3 py-2 text-left text-[13px] text-ink-700 hover:bg-paper-2"
+                          >
+                            View Details
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (pending) return;
+                              sessionStorage.setItem('prefillStudyConfig', JSON.stringify(study.config));
+                              router.push(`/setup?prefill=edit&studyId=${study.id}`);
+                              setMenuOpenId(null);
+                            }}
+                            disabled={pending}
+                            className="block w-full px-3 py-2 text-left text-[13px] text-ink-700 hover:bg-paper-2 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Edit &amp; Generate Link
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(study.id)}
+                            disabled={pending || deletingId === study.id || (!pending && study.interviewCount > 0)}
+                            className="block w-full px-3 py-2 text-left text-[13px] text-error hover:bg-paper-2 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
-};
-
-export default StudyList;
+}

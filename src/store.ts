@@ -16,6 +16,7 @@ import {
   ProfileFieldStatus,
   ProfileField
 } from './types';
+import type { AITransport } from './lib/aiTransport';
 
 // Persistence status for the completed interview, shared between the
 // interview-completion screen and the synthesis screen so both reflect
@@ -88,6 +89,7 @@ interface ResearchState {
   currentStep: AppStep;
   previousStep: AppStep | null;
   viewMode: ViewMode;
+  aiTransport: AITransport;
 
   // Study Configuration (Researcher-defined)
   studyConfig: StudyConfig | null;
@@ -115,19 +117,20 @@ interface ResearchState {
   streamingMessage: string | null;
   isAiThinking: boolean;
 
-  // Participant Token (for URL-based study config)
-  participantToken: string | null;
+  // Non-secret tab selector for the matching HttpOnly participant cookie.
+  participantSessionHandle: string | null;
 
   // Actions - Navigation
   setStep: (step: AppStep) => void;
   setViewMode: (mode: ViewMode) => void;
+  setAiTransport: (transport: AITransport) => void;
 
   // Actions - Study Config
   setStudyConfig: (config: StudyConfig) => void;
   loadExampleStudy: () => void;
 
   // Actions - Consent & Profile
-  giveConsent: () => void;
+  giveConsent: (acceptedAt: number) => void;
   initializeProfile: (schema: ProfileField[]) => void;
   updateProfileField: (fieldId: string, value: string | null, status: ProfileFieldStatus) => void;
   setProfileRawContext: (context: string) => void;
@@ -155,8 +158,11 @@ interface ResearchState {
   // Actions - Behavior Data
   setBehaviorData: (data: BehaviorData) => void;
 
-  // Actions - Token
-  setParticipantToken: (token: string | null) => void;
+  beginParticipantSession: (
+    studyConfig: StudyConfig,
+    sessionHandle?: string | null,
+    aiTransport?: AITransport,
+  ) => void;
 
   // Actions - Reset
   reset: () => void;
@@ -169,6 +175,7 @@ export const useStore = create<ResearchState>()(
       currentStep: 'setup',
       previousStep: null,
       viewMode: 'researcher',
+      aiTransport: 'direct',
       studyConfig: null,
       participantProfile: null,
       consentGiven: false,
@@ -181,7 +188,7 @@ export const useStore = create<ResearchState>()(
       contextEntries: [],
       streamingMessage: null,
       isAiThinking: false,
-      participantToken: null,
+      participantSessionHandle: null,
 
       setStep: (step) => set((state) => ({
         previousStep: state.currentStep,
@@ -189,6 +196,7 @@ export const useStore = create<ResearchState>()(
       })),
 
       setViewMode: (mode) => set({ viewMode: mode }),
+      setAiTransport: (aiTransport) => set({ aiTransport }),
 
       setStudyConfig: (config) => set({ studyConfig: config }),
 
@@ -200,9 +208,9 @@ export const useStore = create<ResearchState>()(
         }
       }),
 
-      giveConsent: () => set({
+      giveConsent: (acceptedAt) => set({
         consentGiven: true,
-        consentTimestamp: Date.now()
+        consentTimestamp: acceptedAt
       }),
 
       initializeProfile: (schema) => set({
@@ -310,12 +318,30 @@ export const useStore = create<ResearchState>()(
 
       setBehaviorData: (data) => set({ behaviorData: data }),
 
-      setParticipantToken: (token) => set({ participantToken: token }),
+      beginParticipantSession: (config, sessionHandle = null, aiTransport = 'direct') => set({
+        studyConfig: config,
+        participantSessionHandle: sessionHandle,
+        aiTransport,
+        viewMode: 'participant',
+        currentStep: 'consent',
+        previousStep: null,
+        participantProfile: null,
+        consentGiven: false,
+        consentTimestamp: null,
+        questionProgress: initialQuestionProgress,
+        interviewHistory: [],
+        behaviorData: initialBehaviorData,
+        synthesis: null,
+        contextEntries: [],
+        streamingMessage: null,
+        isAiThinking: false
+      }),
 
       reset: () => set({
         currentStep: 'setup',
         previousStep: null,
         viewMode: 'researcher',
+        aiTransport: 'direct',
         studyConfig: null,
         participantProfile: null,
         consentGiven: false,
@@ -328,10 +354,11 @@ export const useStore = create<ResearchState>()(
         contextEntries: [],
         streamingMessage: null,
         isAiThinking: false,
-        participantToken: null
+        participantSessionHandle: null
       }),
 
       resetParticipant: () => set((state) => ({
+        participantSessionHandle: null,
         participantProfile: null,
         consentGiven: false,
         consentTimestamp: null,
@@ -341,15 +368,27 @@ export const useStore = create<ResearchState>()(
         synthesis: null,
         saveStatus: 'idle',
         contextEntries: [],
+        streamingMessage: null,
+        isAiThinking: false,
         currentStep: state.studyConfig ? 'consent' : 'setup'
       }))
     }),
     {
       name: 'research-tool-storage',
       storage: createJSONStorage(() => sessionStorage),
-      version: 3,
+      version: 5,
+      migrate: (persistedState) => {
+        if (!persistedState || typeof persistedState !== 'object') {
+          return persistedState as ResearchState;
+        }
+        const cleanState = { ...(persistedState as Record<string, unknown>) };
+        delete cleanState.participantToken;
+        if (cleanState.aiTransport !== 'gateway') cleanState.aiTransport = 'direct';
+        return cleanState as unknown as ResearchState;
+      },
       partialize: (state) => ({
         viewMode: state.viewMode,
+        aiTransport: state.aiTransport,
         studyConfig: state.studyConfig,
         participantProfile: state.participantProfile,
         consentGiven: state.consentGiven,
@@ -360,7 +399,7 @@ export const useStore = create<ResearchState>()(
         synthesis: state.synthesis,
         contextEntries: state.contextEntries,
         currentStep: state.currentStep,
-        participantToken: state.participantToken
+        participantSessionHandle: state.participantSessionHandle
       })
     }
   )

@@ -43,10 +43,3 @@ Write a warm, brief opening (2-3 sentences) that:
 
 Keep it conversational and inviting. Start gathering their profile naturally - don't make it feel like a form.`;
 };
-
-/**
- * Default fallback greeting when AI generation fails
- */
-export const getDefaultGreeting = (studyConfig: StudyConfig): string => {
-  return `Thank you for participating in this study! I'm excited to learn from your experiences. We'll explore about ${studyConfig.coreQuestions.length} questions together. To get started, could you share a bit about yourself and your background?`;
-};

@@ -4,10 +4,19 @@
 export const dynamic = 'force-dynamic';
 
 import { NextResponse } from 'next/server';
-import { getAllInterviews, isKVAvailable } from '@/lib/kv';
-import { getRequestContext } from '@/lib/researcherContext';
+import { getAllInterviewsChecked } from '@/lib/kv';
+import { getHostedResearcherIdentity, getRequestContext } from '@/lib/researcherContext';
+import { configurationRequiredResponse } from '@/lib/researcherAccess';
+import { isHostedMode } from '@/lib/mode';
+import {
+  inspectOwnedStudyGates,
+  loadAllowedInterviews,
+  mapCollectionLoad,
+} from '@/lib/ownedStudies';
 import JSZip from 'jszip';
+import { csvCell } from '@/lib/csv';
 import { StoredInterview } from '@/types';
+import { logRequestFailure } from '@/lib/requestLog';
 
 // Generate markdown transcript for an interview
 function generateTranscript(interview: StoredInterview): string {
@@ -57,7 +66,8 @@ function generateTranscript(interview: StoredInterview): string {
     if (interview.synthesis.themes.length > 0) {
       lines.push('**Themes:**');
       interview.synthesis.themes.forEach(t => {
-        lines.push(`- ${t.theme}: ${t.evidence}`);
+        const support = t.evidence ?? (t.evidenceRefs ?? []).map(r => `"${r.quote}" (turn ${r.turnIndex})`).join('; ');
+        lines.push(support ? `- ${t.theme}: ${support}` : `- ${t.theme}`);
       });
       lines.push('');
     }
@@ -72,76 +82,123 @@ function generateTranscript(interview: StoredInterview): string {
   return lines.join('\n');
 }
 
+function pendingExportResponse(): NextResponse {
+  return NextResponse.json(
+    {
+      error: 'A study operation is already in progress.',
+      code: 'STUDY_OPERATION_PENDING',
+      retryable: true,
+    },
+    { status: 409 },
+  );
+}
+
+async function buildExportResponse(interviews: StoredInterview[]): Promise<Response> {
+  const zip = new JSZip();
+
+  interviews.forEach((interview, index) => {
+    const paddedIndex = String(index + 1).padStart(3, '0');
+    const date = new Date(interview.createdAt).toISOString().split('T')[0];
+    const baseName = `${paddedIndex}_${date}_${interview.id.slice(0, 8)}`;
+    zip.file(`${baseName}.json`, JSON.stringify(interview, null, 2));
+    zip.file(`${baseName}.md`, generateTranscript(interview));
+  });
+
+  const csvLines = [
+    'Interview ID,Study,Date,Duration (min),Messages,Themes,Key Insight',
+  ];
+  interviews.forEach((interview) => {
+    const duration = Math.round((interview.completedAt - interview.createdAt) / 1000 / 60);
+    const themes = interview.synthesis?.themes.length || 0;
+    const insight = interview.synthesis?.bottomLine || '';
+    csvLines.push(
+      `${csvCell(interview.id)},${csvCell(interview.studyName)},${csvCell(new Date(interview.createdAt).toISOString())},${duration},${interview.transcript.length},${themes},${csvCell(insight)}`,
+    );
+  });
+  zip.file('summary.csv', csvLines.join('\n'));
+
+  const zipBlob = await zip.generateAsync({ type: 'blob' });
+  return new Response(zipBlob, {
+    headers: {
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename=interviews-export-${Date.now()}.zip`,
+    },
+  });
+}
+
 export async function GET() {
   try {
-    const { authorized, context, error } = await getRequestContext();
+    if (isHostedMode()) {
+      const identity = await getHostedResearcherIdentity();
+      if (!identity.authorized || !identity.researcherId) {
+        return NextResponse.json({ error: identity.error || 'Unauthorized' }, { status: 401 });
+      }
+      const inspection = await inspectOwnedStudyGates(identity.researcherId);
+      const inspectionMapped = mapCollectionLoad(
+        inspection.status === 'ok'
+          ? { status: 'ok', items: [], pendingStudies: inspection.pendingStudies }
+          : inspection,
+        {
+          unavailable: 'Interview storage is temporarily unavailable.',
+          tooLarge: 'This export is too large for an interactive download. Export a smaller study set.',
+        },
+      );
+      if (!inspectionMapped.ok) {
+        return NextResponse.json(inspectionMapped.body, { status: inspectionMapped.status });
+      }
+      if (inspection.status !== 'ok' || inspection.allowedIds.length === 0) {
+        if (inspection.status === 'ok' && inspection.pendingStudies.length > 0) {
+          return pendingExportResponse();
+        }
+        return NextResponse.json({ error: 'No interviews to export' }, { status: 404 });
+      }
+
+      const access = await getRequestContext();
+      const setupResponse = configurationRequiredResponse(access);
+      if (setupResponse) return setupResponse;
+      if (!access.authorized || !access.context) {
+        return NextResponse.json({ error: access.error || 'Unauthorized' }, { status: 401 });
+      }
+      const loaded = await loadAllowedInterviews(inspection.allowedIds, access.context.kvClient, 500);
+      const mapped = mapCollectionLoad(loaded, {
+        unavailable: 'Interview storage is temporarily unavailable.',
+        tooLarge: 'This export is too large for an interactive download. Export a smaller study set.',
+      });
+      if (!mapped.ok) return NextResponse.json(mapped.body, { status: mapped.status });
+      if (mapped.items.length === 0) {
+        if (inspection.pendingStudies.length > 0) return pendingExportResponse();
+        return NextResponse.json({ error: 'No interviews to export' }, { status: 404 });
+      }
+      return buildExportResponse(mapped.items);
+    }
+
+    const access = await getRequestContext();
+    const setupResponse = configurationRequiredResponse(access);
+    if (setupResponse) return setupResponse;
+    const { authorized, context, error } = access;
     if (!authorized || !context) {
       return NextResponse.json({ error: error || 'Unauthorized' }, { status: 401 });
     }
-
-    const kvAvailable = await isKVAvailable(context.kvClient);
-    if (!kvAvailable) {
-      return NextResponse.json(
-        { error: 'Storage not configured' },
-        { status: 400 }
-      );
+    const loaded = await getAllInterviewsChecked(context.kvClient, 500);
+    const mapped = mapCollectionLoad(loaded, {
+      unavailable: 'Interview storage is temporarily unavailable.',
+      tooLarge: 'This export is too large for an interactive download. Export a smaller study set.',
+    });
+    if (!mapped.ok) return NextResponse.json(mapped.body, { status: mapped.status });
+    if (mapped.items.length === 0) {
+      return NextResponse.json({ error: 'No interviews to export' }, { status: 404 });
     }
-
-    // Get all interviews
-    const interviews = await getAllInterviews(context.kvClient);
-
-    if (interviews.length === 0) {
-      return NextResponse.json(
-        { error: 'No interviews to export' },
-        { status: 404 }
-      );
-    }
-
-    // Create ZIP file
-    const zip = new JSZip();
-
-    // Add each interview as JSON and markdown
-    interviews.forEach((interview, index) => {
-      const paddedIndex = String(index + 1).padStart(3, '0');
-      const date = new Date(interview.createdAt).toISOString().split('T')[0];
-      const baseName = `${paddedIndex}_${date}_${interview.id.slice(0, 8)}`;
-
-      // JSON version
-      zip.file(`${baseName}.json`, JSON.stringify(interview, null, 2));
-
-      // Markdown transcript
-      zip.file(`${baseName}.md`, generateTranscript(interview));
-    });
-
-    // Add summary CSV
-    const csvLines = [
-      'Interview ID,Study,Date,Duration (min),Messages,Themes,Key Insight'
-    ];
-    interviews.forEach(interview => {
-      const duration = Math.round((interview.completedAt - interview.createdAt) / 1000 / 60);
-      const themes = interview.synthesis?.themes.length || 0;
-      const insight = interview.synthesis?.bottomLine?.replace(/"/g, '""') || '';
-      csvLines.push(
-        `"${interview.id}","${interview.studyName}","${new Date(interview.createdAt).toISOString()}",${duration},${interview.transcript.length},${themes},"${insight}"`
-      );
-    });
-    zip.file('summary.csv', csvLines.join('\n'));
-
-    // Generate ZIP as blob
-    const zipBlob = await zip.generateAsync({ type: 'blob' });
-
-    // Return as download
-    return new Response(zipBlob, {
-      headers: {
-        'Content-Type': 'application/zip',
-        'Content-Disposition': `attachment; filename=interviews-export-${Date.now()}.zip`
-      }
-    });
+    return buildExportResponse(mapped.items);
   } catch (error) {
-    console.error('Export API error:', error);
+    logRequestFailure({
+      event: 'route.failure',
+      route: '/api/interviews/export',
+      method: 'GET',
+      status: 503,
+    }, error);
     return NextResponse.json(
       { error: 'Failed to export interviews' },
-      { status: 500 }
+      { status: 503 }
     );
   }
 }
