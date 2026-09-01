@@ -35,6 +35,7 @@ const STUDY_CONFIG_FIELDS = new Set([
   'aiBehavior',
   'aiProvider',
   'aiModel',
+  'aiSynthesisModel',
   'consentText',
   'createdAt',
   'parentStudyId',
@@ -200,6 +201,10 @@ export function validateStudyConfig(value: unknown): ValidationResult {
   }
   if (value.enableReasoning !== undefined && typeof value.enableReasoning !== 'boolean') {
     return { ok: false, error: 'Invalid AI reasoning setting' };
+  }
+  if (value.aiSynthesisModel !== undefined
+    && !isBoundedString(value.aiSynthesisModel, MAX_MODEL_LENGTH, true)) {
+    return { ok: false, error: 'Invalid AI synthesis model' };
   }
   return { ok: true, config: value as unknown as StudyConfig };
 }
