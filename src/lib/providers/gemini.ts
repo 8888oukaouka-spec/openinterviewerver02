@@ -169,7 +169,7 @@ export class GeminiProvider implements AIProvider {
     behaviorData: BehaviorData,
     participantProfile: ParticipantProfile | null,
   ): Promise<ProviderResult<SynthesisResult>> {
-    const requestedModel = GEMINI_SYNTHESIS_MODEL;
+    const requestedModel = studyConfig.aiSynthesisModel || GEMINI_SYNTHESIS_MODEL;
     const response = await this.createInteraction({
       model: requestedModel,
       input: buildSynthesisPrompt(history, studyConfig, behaviorData, participantProfile),
@@ -187,7 +187,7 @@ export class GeminiProvider implements AIProvider {
     syntheses: SynthesisResult[],
     interviewCount: number,
   ): Promise<ProviderResult<AggregateSynthesisPayload>> {
-    const requestedModel = GEMINI_SYNTHESIS_MODEL;
+    const requestedModel = studyConfig.aiSynthesisModel || GEMINI_SYNTHESIS_MODEL;
     const response = await this.createInteraction({
       model: requestedModel,
       input: buildAggregateSynthesisPrompt(studyConfig, syntheses, interviewCount),
@@ -208,7 +208,7 @@ export class GeminiProvider implements AIProvider {
     parentConfig: StudyConfig,
     synthesis: AggregateSynthesisResult,
   ): Promise<ProviderResult<FollowupStudy>> {
-    const requestedModel = GEMINI_SYNTHESIS_MODEL;
+    const requestedModel = parentConfig.aiSynthesisModel || GEMINI_SYNTHESIS_MODEL;
     const response = await this.createInteraction({
       model: requestedModel,
       input: buildFollowupPrompt(parentConfig, synthesis),

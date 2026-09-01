@@ -130,6 +130,7 @@ export interface StudyConfig {
   // reviewed and resaved with an explicit provider and model.
   aiProvider?: AIProviderType;
   aiModel?: string;
+  aiSynthesisModel?: string;
   consentText: string;
   createdAt: number;
   parentStudyId?: string;

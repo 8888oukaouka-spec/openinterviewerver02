@@ -168,6 +168,9 @@ const StudySetup: React.FC = () => {
   const [enableReasoning, setEnableReasoning] = useState<boolean | undefined>(
     studyConfig?.enableReasoning
   );
+  const [aiSynthesisModel, setAiSynthesisModel] = useState<string>(
+    studyConfig?.aiSynthesisModel || 'gemini-3.1-pro-preview'
+  );
   const [linkExpiration, setLinkExpiration] = useState<LinkExpirationOption>(
     studyConfig?.linkExpiration || '30days'
   );
@@ -320,6 +323,7 @@ const StudySetup: React.FC = () => {
           } else if (config.aiModel) {
             setAiModel(config.aiModel);
           }
+          if (config.aiSynthesisModel) setAiSynthesisModel(config.aiSynthesisModel);
           if (config.enableReasoning !== undefined) setEnableReasoning(config.enableReasoning);
           if (config.linkExpiration) setLinkExpiration(config.linkExpiration);
           if (config.consentText) setConsentText(config.consentText);
@@ -436,6 +440,7 @@ const StudySetup: React.FC = () => {
       const provider = studyConfig.aiProvider || 'gemini';
       setAiProvider(provider);
       setAiModel(studyConfig.aiModel || DEFAULT_MODEL_BY_PROVIDER[provider]);
+      setAiSynthesisModel(studyConfig.aiSynthesisModel || 'gemini-3.1-pro-preview');
       setEnableReasoning(studyConfig.enableReasoning);
       setLinkExpiration(studyConfig.linkExpiration || 'never');
       setConsentText(studyConfig.consentText);
@@ -521,6 +526,7 @@ const StudySetup: React.FC = () => {
     aiBehavior,
     aiProvider,
     aiModel,
+    aiSynthesisModel: aiProvider === 'gemini' ? aiSynthesisModel : undefined,
     enableReasoning: aiProvider === 'gemini' ? enableReasoning : undefined,
     linkExpiration,
     linksEnabled: studyConfig?.linksEnabled ?? true,
@@ -1266,6 +1272,27 @@ const StudySetup: React.FC = () => {
                   <option value="auto">Automatic (recommended)</option>
                   <option value="on">More thinking</option>
                   <option value="off">Minimize thinking</option>
+                </select>
+              </Field>
+            )}
+
+            {aiProvider === 'gemini' && (
+              <Field
+                label="Synthesis Model"
+                htmlFor="study-synthesis-model"
+                hint="Model used for post-interview analysis and aggregate synthesis. Gemini 2.5 Pro is on the confirmed free tier; 3.1 Pro Preview offers higher capability."
+              >
+                <select
+                  id="study-synthesis-model"
+                  value={aiSynthesisModel}
+                  onChange={(e) => {
+                    setAiSynthesisModel(e.target.value);
+                    setIsDirty(true);
+                  }}
+                  className="w-full"
+                >
+                  <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview (higher capability)</option>
+                  <option value="gemini-2.5-pro">Gemini 2.5 Pro (free tier)</option>
                 </select>
               </Field>
             )}
