@@ -1,4 +1,36 @@
 import { GoogleGenAI } from '@google/genai';
+import type { ProviderJsonSchema } from '../providerSchemas';
+
+// Converts JSON Schema to Gemini's OpenAPI 3.0 format:
+// - removes additionalProperties (not supported)
+// - converts type: ['x', 'null'] → type: 'x', nullable: true
+// - removes null from enum arrays and adds nullable: true
+function toGeminiSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(schema)) {
+    if (k === 'additionalProperties') continue;
+    if (k === 'type' && Array.isArray(v)) {
+      const nonNull = (v as string[]).filter((t) => t !== 'null');
+      out['type'] = nonNull.length === 1 ? nonNull[0] : nonNull;
+      if ((v as string[]).includes('null')) out['nullable'] = true;
+    } else if (k === 'enum' && Array.isArray(v)) {
+      const nonNull = (v as unknown[]).filter((e) => e !== null);
+      out['enum'] = nonNull;
+      if ((v as unknown[]).includes(null)) out['nullable'] = true;
+    } else if (v && typeof v === 'object' && !Array.isArray(v)) {
+      out[k] = toGeminiSchema(v as Record<string, unknown>);
+    } else if (Array.isArray(v)) {
+      out[k] = v.map((item) =>
+        item && typeof item === 'object' && !Array.isArray(item)
+          ? toGeminiSchema(item as Record<string, unknown>)
+          : item
+      );
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
 import {
   AIProvider,
   buildInterviewSystemPrompt,
@@ -41,7 +73,6 @@ import {
   followupStudyResponseSchema,
   interviewResponseSchema,
   synthesisResponseSchema,
-  type ProviderJsonSchema,
 } from '../providerSchemas';
 import {
   buildFollowupPrompt,
@@ -107,7 +138,7 @@ export class GeminiProvider implements AIProvider {
                 response_format: {
                   type: 'text' as const,
                   mime_type: 'application/json' as const,
-                  schema: options.schema,
+                  schema: toGeminiSchema(options.schema as Record<string, unknown>),
                 },
               }
             : {}),
