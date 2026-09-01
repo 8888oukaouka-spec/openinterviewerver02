@@ -1,14 +1,23 @@
 import { GoogleGenAI } from '@google/genai';
 import type { ProviderJsonSchema } from '../providerSchemas';
 
-// Converts JSON Schema to Gemini's OpenAPI 3.0 format:
-// - removes additionalProperties (not supported)
+// Keywords not supported by Gemini's schema format — strip them silently.
+const GEMINI_UNSUPPORTED_KEYWORDS = new Set([
+  'additionalProperties',
+  'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum',
+  'minItems', 'maxItems',
+  'minLength', 'maxLength',
+  'pattern', '$schema', '$id', '$ref',
+]);
+
+// Converts JSON Schema to Gemini's schema format:
+// - strips unsupported keywords (minimum, maxItems, additionalProperties, etc.)
 // - converts type: ['x', 'null'] → type: 'x', nullable: true
 // - removes null from enum arrays and adds nullable: true
 function toGeminiSchema(schema: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(schema)) {
-    if (k === 'additionalProperties') continue;
+    if (GEMINI_UNSUPPORTED_KEYWORDS.has(k)) continue;
     if (k === 'type' && Array.isArray(v)) {
       const nonNull = (v as string[]).filter((t) => t !== 'null');
       out['type'] = nonNull.length === 1 ? nonNull[0] : nonNull;
@@ -136,21 +145,18 @@ export class GeminiProvider implements AIProvider {
       : {};
 
     try {
-      const response = await withProviderDeadline(options.deadlineMs, (signal) =>
-        this.ai.models.generateContent(
-          {
-            model: options.model,
-            contents: options.input,
-            config: {
-              ...(options.systemInstruction
-                ? { systemInstruction: options.systemInstruction }
-                : {}),
-              ...jsonConfig,
-              ...thinkingConfig,
-            },
+      const response = await withProviderDeadline(options.deadlineMs, (_signal) =>
+        this.ai.models.generateContent({
+          model: options.model,
+          contents: options.input,
+          config: {
+            ...(options.systemInstruction
+              ? { systemInstruction: options.systemInstruction }
+              : {}),
+            ...jsonConfig,
+            ...thinkingConfig,
           },
-          { signal } as Parameters<typeof this.ai.models.generateContent>[1],
-        )
+        })
       );
       return { output_text: response.text ?? '', model: options.model };
     } catch (error) {
