@@ -121,35 +121,38 @@ export class GeminiProvider implements AIProvider {
     enableReasoning?: boolean;
     deadlineMs: number;
     operation: string;
-  }) {
+  }): Promise<{ output_text: string; model: string }> {
     const thinkingLevel = getGeminiInteractionThinkingLevel(options.enableReasoning);
 
+    const thinkingConfig = thinkingLevel !== undefined
+      ? { thinkingConfig: { thinkingBudget: thinkingLevel === 'high' ? 8192 : 0 } }
+      : {};
+
+    const jsonConfig = options.schema
+      ? {
+          responseMimeType: 'application/json' as const,
+          responseSchema: toGeminiSchema(options.schema as Record<string, unknown>),
+        }
+      : {};
+
     try {
-      return await withProviderDeadline(options.deadlineMs, (signal) =>
-        this.ai.interactions.create({
-          model: options.model,
-          input: options.input,
-          store: false,
-          ...(options.systemInstruction
-            ? { system_instruction: options.systemInstruction }
-            : {}),
-          ...(options.schema
-            ? {
-                response_format: {
-                  type: 'text' as const,
-                  mime_type: 'application/json' as const,
-                  schema: toGeminiSchema(options.schema as Record<string, unknown>),
-                },
-              }
-            : {}),
-          ...(thinkingLevel
-            ? { generation_config: { thinking_level: thinkingLevel } }
-            : {}),
-        }, {
-          timeout: options.deadlineMs,
-          fetchOptions: { signal },
-        })
+      const response = await withProviderDeadline(options.deadlineMs, (signal) =>
+        this.ai.models.generateContent(
+          {
+            model: options.model,
+            contents: options.input,
+            config: {
+              ...(options.systemInstruction
+                ? { systemInstruction: options.systemInstruction }
+                : {}),
+              ...jsonConfig,
+              ...thinkingConfig,
+            },
+          },
+          { signal } as Parameters<typeof this.ai.models.generateContent>[1],
+        )
       );
+      return { output_text: response.text ?? '', model: options.model };
     } catch (error) {
       if (error instanceof ProviderTimeoutError || error instanceof ProviderFailure) throw error;
       throw providerCallError('gemini', options.operation, error);
