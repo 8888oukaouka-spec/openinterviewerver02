@@ -214,7 +214,7 @@ export class GeminiProvider implements AIProvider {
       model: requestedModel,
       input: buildSynthesisPrompt(history, studyConfig, behaviorData, participantProfile),
       schema: synthesisResponseSchema,
-      enableReasoning: studyConfig.enableReasoning ?? true,
+      enableReasoning: studyConfig.enableReasoning,
       deadlineMs: SYNTHESIS_DEADLINE_MS,
       operation: 'synthesis',
     });
@@ -232,7 +232,7 @@ export class GeminiProvider implements AIProvider {
       model: requestedModel,
       input: buildAggregateSynthesisPrompt(studyConfig, syntheses, interviewCount),
       schema: aggregateSynthesisResponseSchema,
-      enableReasoning: studyConfig.enableReasoning ?? true,
+      enableReasoning: studyConfig.enableReasoning,
       deadlineMs: SYNTHESIS_DEADLINE_MS,
       operation: 'aggregate-synthesis',
     });
@@ -253,7 +253,7 @@ export class GeminiProvider implements AIProvider {
       model: requestedModel,
       input: buildFollowupPrompt(parentConfig, synthesis),
       schema: followupStudyResponseSchema,
-      enableReasoning: parentConfig.enableReasoning ?? true,
+      enableReasoning: parentConfig.enableReasoning,
       deadlineMs: SYNTHESIS_DEADLINE_MS,
       operation: 'follow-up',
     });
