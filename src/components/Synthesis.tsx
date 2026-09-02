@@ -121,10 +121,12 @@ const Synthesis: React.FC = () => {
       } catch (error) {
         console.error('Error synthesizing interview:', error);
         setAnalysisError(true);
-        hasAttemptedAnalysis.current = false;  // Allow retry
-        // Persist raw transcript even when synthesis fails so the interview is never lost.
-        // A later successful synthesis will upsert the same record with analysis attached.
-        await doSave(null);
+        // Do NOT reset hasAttemptedAnalysis here — saveStatus is in the effect
+        // deps, so any state change from doSave would re-trigger the effect and
+        // immediately loop. Retry is driven exclusively by handleRetryAnalysis,
+        // which resets the ref and bumps retryTrigger.
+        // (doSave(null) was also removed: the save route requires a synthesis
+        // receipt, so a null-synthesis save always returns 400.)
       } finally {
         setIsAnalyzing(false);
       }
