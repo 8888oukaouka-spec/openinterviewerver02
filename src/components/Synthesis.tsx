@@ -192,8 +192,8 @@ const Synthesis: React.FC = () => {
                 <Button variant="quiet" onClick={handleBack}>
                   Back to interview
                 </Button>
-                <Button variant="primary" onClick={handleRetryAnalysis}>
-                  Retry finalization
+                <Button variant="primary" disabled={isAnalyzing} onClick={handleRetryAnalysis}>
+                  {isAnalyzing ? 'Retrying…' : 'Retry finalization'}
                 </Button>
               </div>
             </>
