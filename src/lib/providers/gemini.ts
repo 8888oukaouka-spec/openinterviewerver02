@@ -95,6 +95,13 @@ import {
 } from './shared';
 import { isKnownProviderModel } from '../providerRegistry';
 
+// Resolve synthesis model: fall back to the stable default if the stored model
+// is no longer in the catalog (e.g. a preview that has since expired).
+function resolveSynthesisModel(requested: string | undefined): string {
+  const candidate = requested || GEMINI_SYNTHESIS_MODEL;
+  return isKnownProviderModel('gemini', candidate) ? candidate : GEMINI_SYNTHESIS_MODEL;
+}
+
 type GeminiThinkingLevel = 'low' | 'high';
 
 export function getGeminiInteractionThinkingLevel(
@@ -209,7 +216,7 @@ export class GeminiProvider implements AIProvider {
     behaviorData: BehaviorData,
     participantProfile: ParticipantProfile | null,
   ): Promise<ProviderResult<SynthesisResult>> {
-    const requestedModel = studyConfig.aiSynthesisModel || GEMINI_SYNTHESIS_MODEL;
+    const requestedModel = resolveSynthesisModel(studyConfig.aiSynthesisModel);
     const response = await this.createInteraction({
       model: requestedModel,
       input: buildSynthesisPrompt(history, studyConfig, behaviorData, participantProfile),
@@ -228,7 +235,7 @@ export class GeminiProvider implements AIProvider {
     syntheses: SynthesisResult[],
     interviewCount: number,
   ): Promise<ProviderResult<AggregateSynthesisPayload>> {
-    const requestedModel = studyConfig.aiSynthesisModel || GEMINI_SYNTHESIS_MODEL;
+    const requestedModel = resolveSynthesisModel(studyConfig.aiSynthesisModel);
     const response = await this.createInteraction({
       model: requestedModel,
       input: buildAggregateSynthesisPrompt(studyConfig, syntheses, interviewCount),
@@ -248,7 +255,7 @@ export class GeminiProvider implements AIProvider {
     parentConfig: StudyConfig,
     synthesis: AggregateSynthesisResult,
   ): Promise<ProviderResult<FollowupStudy>> {
-    const requestedModel = parentConfig.aiSynthesisModel || GEMINI_SYNTHESIS_MODEL;
+    const requestedModel = resolveSynthesisModel(parentConfig.aiSynthesisModel);
     const response = await this.createInteraction({
       model: requestedModel,
       input: buildFollowupPrompt(parentConfig, synthesis),

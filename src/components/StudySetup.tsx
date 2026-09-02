@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useStore } from '@/store';
-import { StudyConfig, ProfileField, AIBehavior, AIProviderType, LinkExpirationOption } from '@/types';
+import { StudyConfig, ProfileField, AIBehavior, AIProviderType, LinkExpirationOption, GEMINI_SYNTHESIS_MODEL } from '@/types';
 import { saveStudy } from '@/services/storageService';
 import {
   IDEMPOTENCY_KEY_CONSUMED,
@@ -169,7 +169,7 @@ const StudySetup: React.FC = () => {
     studyConfig?.enableReasoning
   );
   const [aiSynthesisModel, setAiSynthesisModel] = useState<string>(
-    studyConfig?.aiSynthesisModel || 'gemini-3.1-pro-preview'
+    studyConfig?.aiSynthesisModel || GEMINI_SYNTHESIS_MODEL
   );
   const [linkExpiration, setLinkExpiration] = useState<LinkExpirationOption>(
     studyConfig?.linkExpiration || '30days'
@@ -440,7 +440,7 @@ const StudySetup: React.FC = () => {
       const provider = studyConfig.aiProvider || 'gemini';
       setAiProvider(provider);
       setAiModel(studyConfig.aiModel || DEFAULT_MODEL_BY_PROVIDER[provider]);
-      setAiSynthesisModel(studyConfig.aiSynthesisModel || 'gemini-3.1-pro-preview');
+      setAiSynthesisModel(studyConfig.aiSynthesisModel || GEMINI_SYNTHESIS_MODEL);
       setEnableReasoning(studyConfig.enableReasoning);
       setLinkExpiration(studyConfig.linkExpiration || 'never');
       setConsentText(studyConfig.consentText);
@@ -1291,8 +1291,8 @@ const StudySetup: React.FC = () => {
                   }}
                   className="w-full"
                 >
-                  <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview (higher capability)</option>
-                  <option value="gemini-2.5-pro">Gemini 2.5 Pro (free tier)</option>
+                  <option value="gemini-2.5-pro">Gemini 2.5 Pro (higher quality)</option>
+                  <option value="gemini-2.5-flash">Gemini 2.5 Flash (faster)</option>
                 </select>
               </Field>
             )}
