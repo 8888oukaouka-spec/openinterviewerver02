@@ -194,6 +194,17 @@ export const FAMILY_TAGS: Record<FamilyName, Readonly<Record<string, WireTagSpec
   receipt: {
     'oi:receipt-unavailable': { arity: 1 },
   },
+  analysis: {
+    'oi:analysis-unavailable': { arity: 1 },
+    'oi:analysis-notfound': { arity: 1 },
+    'oi:analysis-busy': { arity: 1 },
+    'oi:analysis-done': { arity: 1 },
+    'oi:analysis-stale': { arity: 1 },
+    'oi:analysis-written': { arity: 1 },
+    'oi:analysis-recorded': { arity: 1 },
+    'oi:analysis-corrupt': { arity: 1 },
+    'oi:analysis-claimed': { arity: 2, payloadKind: 'count' },
+  },
 };
 
 export function isFamilyTag(family: FamilyName, tag: string): boolean {

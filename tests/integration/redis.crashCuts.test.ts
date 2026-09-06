@@ -736,6 +736,231 @@ describe('transport response-loss and undecodable-after-commit', () => {
   });
 });
 
+describe('slice P: interview analysis attach preserves untouched JSON types', () => {
+  it('counts a delayed contender after intervening failures without overwriting its attempt-start time', async () => {
+    const interview = makeStoredInterview({ id: `interview-${uuid()}` });
+    await redis.set(`interview:${interview.id}`, encodeInterviewValue(interview));
+    const waiting = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const delayedClient = {
+      get: redis.get.bind(redis),
+      eval: async (...args: Parameters<RedisPort['eval']>) => {
+        waiting.resolve();
+        await release.promise;
+        return redis.eval(...args);
+      },
+    } as RedisPort;
+
+    // Before the fix this request GETs attempts=0, then queues its EVAL
+    // behind two complete claim/failure cycles and writes attempts=1 again.
+    const delayedClaim = claimInterviewAnalysis(interview.id, delayedClient, NOW);
+    await waiting.promise;
+    try {
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        const claim = await claimInterviewAnalysis(interview.id, redis, NOW + attempt);
+        expect(claim).toMatchObject({ status: 'claimed', attempts: attempt });
+        if (claim.status !== 'claimed') throw new Error('Claim failed');
+        expect(await recordInterviewAnalysisFailure(interview.id, claim.claimId, 'provider', redis))
+          .toEqual({ status: 'written' });
+        const failed = await getInterviewChecked(interview.id, redis);
+        expect(failed.status === 'found' && failed.interview.analysis).toMatchObject({
+          status: 'failed', attempts: attempt, lastAttemptAt: NOW + attempt,
+        });
+      }
+    } finally {
+      release.resolve();
+    }
+
+    const claim = await delayedClaim;
+    expect(claim).toMatchObject({ status: 'claimed', attempts: 3 });
+    if (claim.status !== 'claimed') throw new Error('Delayed claim failed');
+    expect(await attachInterviewAnalysis({
+      interviewId: interview.id,
+      claimId: claim.claimId,
+      synthesis: {
+        statedPreferences: [], revealedPreferences: [], themes: [],
+        contradictions: [], keyInsights: [], bottomLine: 'Saved analysis',
+      },
+      provenance: { aiProvider: 'gemini', aiModel: 'gemini-3.7-flash', requestedAiModel: 'gemini-3.7-flash' },
+      studyRevision: 2,
+    }, redis)).toEqual({ status: 'written' });
+    const completed = await getInterviewChecked(interview.id, redis);
+    expect(completed.status === 'found' && completed.interview.analysis).toMatchObject({
+      status: 'complete', attempts: 3, lastAttemptAt: NOW, studyRevision: 2,
+    });
+  });
+
+  it('admits one racing claim and fences its writes after a lease takeover', async () => {
+    const interview = makeStoredInterview({ id: `interview-${uuid()}` });
+    await redis.set(`interview:${interview.id}`, encodeInterviewValue(interview));
+    const racing = await Promise.all([
+      claimInterviewAnalysis(interview.id, redis, NOW),
+      claimInterviewAnalysis(interview.id, redis, NOW),
+    ]);
+    expect(racing.map(claim => claim.status).sort()).toEqual(['busy', 'claimed']);
+    const first = racing.find(claim => claim.status === 'claimed');
+    if (!first || first.status !== 'claimed') throw new Error('Claim failed');
+    const takeover = await claimInterviewAnalysis(interview.id, redis, NOW + ANALYSIS_CLAIM_LEASE_MS);
+    expect(takeover).toMatchObject({ status: 'claimed', attempts: 2 });
+    if (takeover.status !== 'claimed') throw new Error('Takeover failed');
+    expect(await attachInterviewAnalysis({
+      interviewId: interview.id,
+      claimId: first.claimId,
+      synthesis: {
+        statedPreferences: [], revealedPreferences: [], themes: [],
+        contradictions: [], keyInsights: [], bottomLine: 'Stale analysis',
+      },
+      provenance: { aiProvider: 'gemini', aiModel: 'gemini-3.7-flash', requestedAiModel: 'gemini-3.7-flash' },
+      studyRevision: 1,
+    }, redis)).toEqual({ status: 'stale' });
+    expect(await recordInterviewAnalysisFailure(interview.id, first.claimId, 'provider', redis))
+      .toEqual({ status: 'stale' });
+    expect(await recordInterviewAnalysisFailure(interview.id, takeover.claimId, 'provider', redis))
+      .toEqual({ status: 'written' });
+    const failed = await getInterviewChecked(interview.id, redis);
+    expect(failed.status === 'found' && failed.interview.analysis).toMatchObject({
+      status: 'failed', attempts: 2, lastAttemptAt: NOW + ANALYSIS_CLAIM_LEASE_MS,
+    });
+  });
+
+  it.each([-1, 1.5, '2'])('refuses a malformed attempt counter (%s) as corrupt without changing the record', async (attempts) => {
+    const interview = makeStoredInterview({ id: `interview-${uuid()}` });
+    const encoded = `oi:interview:${JSON.stringify({
+      ...interview,
+      analysis: { status: 'pending', attempts, lastAttemptAt: NOW },
+    })}`;
+    await redis.set(`interview:${interview.id}`, encoded);
+    expect(await claimInterviewAnalysis(interview.id, redis, NOW)).toEqual({ status: 'corrupt' });
+    expect(await redis.get(`interview:${interview.id}`)).toBe(encoded);
+  });
+
+  it('refuses a missing attempt counter as corrupt without changing the record', async () => {
+    const interview = makeStoredInterview({ id: `interview-${uuid()}` });
+    const encoded = `oi:interview:${JSON.stringify({
+      ...interview,
+      analysis: { status: 'pending', lastAttemptAt: NOW },
+    })}`;
+    await redis.set(`interview:${interview.id}`, encoded);
+    expect(await claimInterviewAnalysis(interview.id, redis, NOW)).toEqual({ status: 'corrupt' });
+    expect(await redis.get(`interview:${interview.id}`)).toBe(encoded);
+  });
+
+  it('refuses an exhausted attempt counter as unavailable, not corrupt, without changing the record', async () => {
+    const interview = makeStoredInterview({ id: `interview-${uuid()}` });
+    const encoded = `oi:interview:${JSON.stringify({
+      ...interview,
+      analysis: { status: 'pending', attempts: Number.MAX_SAFE_INTEGER, lastAttemptAt: NOW },
+    })}`;
+    await redis.set(`interview:${interview.id}`, encoded);
+    expect(await claimInterviewAnalysis(interview.id, redis, NOW)).toEqual({ status: 'unavailable' });
+    expect(await redis.get(`interview:${interview.id}`)).toBe(encoded);
+  });
+
+  it('refuses a running claim without an attempt-start time as corrupt on attach and fail, byte-for-byte unchanged', async () => {
+    const interview = makeStoredInterview({ id: `interview-${uuid()}` });
+    const encoded = `oi:interview:${JSON.stringify({
+      ...interview,
+      analysis: { status: 'running', attempts: 1, claimId: 'claim-held', claimedAt: NOW },
+    })}`;
+    await redis.set(`interview:${interview.id}`, encoded);
+    expect(await attachInterviewAnalysis({
+      interviewId: interview.id,
+      claimId: 'claim-held',
+      synthesis: {
+        statedPreferences: [], revealedPreferences: [], themes: [],
+        contradictions: [], keyInsights: [], bottomLine: 'Refused analysis',
+      },
+      provenance: { aiProvider: 'gemini', aiModel: 'gemini-3.7-flash', requestedAiModel: 'gemini-3.7-flash' },
+      studyRevision: 1,
+    }, redis)).toEqual({ status: 'corrupt' });
+    expect(await redis.get(`interview:${interview.id}`)).toBe(encoded);
+    expect(await recordInterviewAnalysisFailure(interview.id, 'claim-held', 'provider', redis))
+      .toEqual({ status: 'corrupt' });
+    expect(await redis.get(`interview:${interview.id}`)).toBe(encoded);
+  });
+
+  it('refuses a record with a non-numeric identity timestamp as corrupt without changing it', async () => {
+    const interview = makeStoredInterview({ id: `interview-${uuid()}` });
+    const encoded = `oi:interview:${JSON.stringify({ ...interview, createdAt: String(NOW) })}`;
+    await redis.set(`interview:${interview.id}`, encoded);
+    expect(await claimInterviewAnalysis(interview.id, redis, NOW)).toEqual({ status: 'corrupt' });
+    expect(await redis.get(`interview:${interview.id}`)).toBe(encoded);
+  });
+
+  it('still claims a legacy record that has no analysis member and starts its counter at one', async () => {
+    const interview = makeStoredInterview({ id: `interview-${uuid()}` });
+    const record = { ...interview } as Record<string, unknown>;
+    delete record.analysis;
+    expect(record).not.toHaveProperty('analysis');
+    await redis.set(`interview:${interview.id}`, `oi:interview:${JSON.stringify(record)}`);
+    const claim = await claimInterviewAnalysis(interview.id, redis, NOW);
+    expect(claim).toMatchObject({ status: 'claimed', attempts: 1 });
+    const stored = await getInterviewChecked(interview.id, redis);
+    expect(stored.status === 'found' && stored.interview.analysis).toMatchObject({
+      status: 'running', attempts: 1, lastAttemptAt: NOW,
+    });
+  });
+
+  it('claim then attach on a record with an empty array and an empty string round-trips both byte-identically', async () => {
+    const studyId = uuid();
+    const config = makeStudyConfig({ id: studyId, aiProvider: 'gemini', aiModel: 'gemini-3.7-flash' });
+    const study = makeStoredStudy({ id: studyId, config });
+    expect(await createStudyAtomic(study, redis)).toBe('created');
+
+    const interview = makeStoredInterview({
+      id: `interview-${uuid()}`,
+      studyId,
+      // The classic cjson pitfall this Lua patcher exists to avoid: an empty
+      // array decodes indistinguishably from an empty object unless the
+      // untouched member's raw text is preserved verbatim.
+      behaviorData: {
+        timePerTopic: {},
+        messagesPerTopic: {},
+        topicsExplored: [],
+        contradictions: [],
+      },
+      participantProfile: { id: 'profile-empty', fields: [], rawContext: '', timestamp: NOW },
+    });
+    const options = {
+      expectedStudyRevision: 1,
+      identity: { participantSessionId: `session-${uuid()}`, linkId: `link-${uuid()}` },
+    };
+    expect(await persistCompletedInterview(interview, FP, options, redis)).toEqual({ status: 'created' });
+
+    const claimed = await claimInterviewAnalysis(interview.id, redis);
+    expect(claimed.status).toBe('claimed');
+    if (claimed.status !== 'claimed') throw new Error('Claim failed');
+
+    const synthesis = {
+      statedPreferences: [], revealedPreferences: [], themes: [],
+      contradictions: [], keyInsights: ['An insight'], bottomLine: 'A bottom line',
+    };
+    const attached = await attachInterviewAnalysis({
+      interviewId: interview.id,
+      claimId: claimed.claimId,
+      synthesis,
+      provenance: { aiProvider: 'gemini', aiModel: 'gemini-3.7-flash', requestedAiModel: 'gemini-3.7-flash' },
+      studyRevision: 1,
+    }, redis);
+    expect(attached.status).toBe('written');
+
+    const raw = await redis.get<string>(`interview:${interview.id}`);
+    if (typeof raw !== 'string') throw new Error('Stored interview JSON is missing');
+    expect(raw.startsWith('oi:interview:')).toBe(true);
+    const stored = JSON.parse(raw.slice('oi:interview:'.length)) as typeof interview;
+
+    // The untouched members round-trip with their original JSON types —
+    // real cjson is the only place `[]` vs `{}` is genuinely exercised.
+    expect(stored.behaviorData.topicsExplored).toEqual([]);
+    expect(Array.isArray(stored.behaviorData.topicsExplored)).toBe(true);
+    expect(stored.participantProfile?.rawContext).toBe('');
+    expect(stored.synthesis).toEqual(synthesis);
+    expect(stored.analysis).toMatchObject({ status: 'complete', studyRevision: 1 });
+    expect(stored.aiProvider).toBe('gemini');
+    expect(stored.aiModel).toBe('gemini-3.7-flash');
+  });
+});
+
 describe('manifest coverage', () => {
   it('every listed cut has a real-wrapper test', () => {
     assertFaultCutsCovered();
