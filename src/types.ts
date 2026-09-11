@@ -131,6 +131,27 @@ export interface StudyConfig {
   aiModel?: string;
   aiSynthesisModel?: string;
   consentText: string;
+  /**
+   * Optional. Shown to participants on their submission receipt so they can
+   * reach the study's data controller. Free text — a name, an address, a lab
+   * page — and deliberately not format-validated: the server cannot verify a
+   * contact, so it must never be presented as verified.
+   */
+  researcherContact?: string;
+  /**
+   * Optional. The researcher-authored screen a participant reads once their
+   * interview is saved. Absent means "render the generated default", and
+   * unlike `consentText` it is deliberately NOT frozen into the record at
+   * save time: no consent hash binds it, and a stored copy would freeze one
+   * deployment's default forever.
+   */
+  thankYouText?: string;
+  /**
+   * Optional. Researcher-authored instructions that shape how the interviewer
+   * phrases questions and carries itself; injected verbatim into the interview
+   * and greeting prompts. Absent means the QUESTION CRAFT defaults alone.
+   */
+  interviewerInstructions?: string;
   createdAt: number;
   parentStudyId?: string;
   parentStudyName?: string;
@@ -237,6 +258,31 @@ export interface AIInterviewResponse {
 }
 
 // ============================================
+// Interview Analysis State
+// ============================================
+
+export type InterviewAnalysisStatus = 'pending' | 'running' | 'completed' | 'failed';
+
+export type InterviewAnalysisFailureKind =
+  | 'provider'        // the call threw or returned an error
+  | 'invalid-output'  // the response did not validate as a SynthesisResult
+  | 'too-large'       // over MAX_ATTACHED_SYNTHESIS_BYTES
+  | 'timeout'         // the deferred run outlived its lease
+  | 'storage';        // the attach write failed
+
+export interface InterviewAnalysisState {
+  status: InterviewAnalysisStatus;
+  attempts: number;
+  lastAttemptAt: number;
+  claimId?: string;
+  claimedAt?: number;
+  failureKind?: InterviewAnalysisFailureKind;
+  studyRevision?: number;
+  generation?: number;
+  recoveryRequired?: boolean;
+}
+
+// ============================================
 // Stored Interview (Upstash Redis)
 // ============================================
 
@@ -258,6 +304,33 @@ export interface StoredInterview {
   aiModel?: string;
   requestedAiModel?: string;
   routedProvider?: string;
+
+  /**
+   * The provider and model that conducted the CONVERSATION — the researcher's
+   * own choice, snapshotted server-side from the canonical study config at
+   * save time. Safe to treat as the model every turn used: the participant
+   * session is pinned to a study revision (auth.ts), a config edit advances
+   * that revision (kv.ts REPLACE_STUDY_CONFIG_SCRIPT), and a moved revision
+   * refuses every participant request (researcherContext.ts) — so the config
+   * cannot change inside one interview.
+   *
+   * This is the model that was ASKED FOR, not one a provider reported: an
+   * interview turn returns no execution provenance (ai.ts AIProvider). Absent
+   * on every interview saved before Slice O; render those as "not recorded"
+   * and never fill them in from the study's current config.
+   */
+  conductedByProvider?: AIProviderType;
+  conductedByModel?: string;
+  /** Researcher instructions in force at save time; never back-filled. */
+  conductedWithInstructions?: string;
+
+  /**
+   * Absent on every record written before Slice P. Read it through
+   * `analysisStatus()` (src/lib/analysisState.ts), never directly: a legacy
+   * record's status is derived from whether it carries a synthesis.
+   */
+  analysis?: InterviewAnalysisState;
+
   participantLinkId?: string;
 }
 

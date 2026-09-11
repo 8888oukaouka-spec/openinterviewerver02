@@ -16,7 +16,12 @@ import {
   PROVIDER_OPTIONS,
 } from '@/lib/providerRegistry';
 import { cn } from '@/lib/cn';
+import { CONSENT_TEXT_PLACEHOLDER, CONSENT_TEXT_PLACEHOLDER_ERROR } from '@/lib/consentText';
+import { BRACKETED_PLACEHOLDER, THANK_YOU_TEXT_PLACEHOLDER_ERROR } from '@/lib/thankYouText';
 import { Button, Coordinate, Field, Label, Rule } from '@/components/ui';
+import { InterviewerMannerSection } from '@/components/studySetup/InterviewerMannerSection';
+import { InterviewStyleSection } from '@/components/studySetup/InterviewStyleSection';
+import type { StudyDraft } from '@/components/studySetup/useStudyDraft';
 
 type ConfigStatus = {
   mode: 'hosted' | 'standalone';
@@ -178,6 +183,10 @@ const StudySetup: React.FC = () => {
     studyConfig?.consentText ||
     'Thank you for participating in this research study. Your responses will be used to understand [research topic]. You may stop at any time. Do you consent to participate?'
   );
+  const [interviewerInstructions, setInterviewerInstructionsState] = useState(
+    studyConfig?.interviewerInstructions ?? ''
+  );
+  const setInterviewerInstructions = (v: string) => { setInterviewerInstructionsState(v); setIsDirty(true); };
 
   // Participant link generation
   const [participantLink, setParticipantLink] = useState<string | null>(null);
@@ -532,6 +541,7 @@ const StudySetup: React.FC = () => {
     linksEnabled: studyConfig?.linksEnabled ?? true,
     consentText,
     createdAt: studyConfig?.createdAt || Date.now(),
+    ...(interviewerInstructions.trim() ? { interviewerInstructions: interviewerInstructions.trim() } : {}),
     // Include parent study info if this is a follow-up
     ...(parentStudyInfo && {
       parentStudyId: parentStudyInfo.id,
@@ -736,6 +746,14 @@ const StudySetup: React.FC = () => {
 
     try {
       const config = buildConfig();
+      if (CONSENT_TEXT_PLACEHOLDER.test(config.consentText)) {
+        setSaveError(CONSENT_TEXT_PLACEHOLDER_ERROR);
+        return;
+      }
+      if (config.thankYouText !== undefined && BRACKETED_PLACEHOLDER.test(config.thankYouText)) {
+        setSaveError(THANK_YOU_TEXT_PLACEHOLDER_ERROR);
+        return;
+      }
       const result = await saveStudy({
         config,
         updateStudyId: isUpdate ? savedStudyId || undefined : undefined,
@@ -859,7 +877,8 @@ const StudySetup: React.FC = () => {
     { id: 'core-questions', label: 'Core Questions' },
     { id: 'topic-areas', label: 'Topic Areas' },
     { id: 'ai-provider', label: 'AI Provider' },
-    { id: 'ai-interview-style', label: 'AI Interview Style' },
+    { id: 'interview-structure', label: 'Interview Structure' },
+    { id: 'interviewer-manner', label: 'Interviewer Manner' },
     { id: 'link-settings', label: 'Link Settings' },
     { id: 'consent-text', label: 'Consent Text' },
   ];
@@ -1350,36 +1369,18 @@ const StudySetup: React.FC = () => {
           </section>
           <Rule />
 
-          {/* AI Behavior */}
-          <section id="ai-interview-style" className="space-y-4">
-            <h2 className="font-sans text-[15px] font-semibold text-ink-900">AI Interview Style</h2>
-            <div className="space-y-2">
-              {behaviorOptions.map((option) => {
-                const selected = aiBehavior === option.id;
-                return (
-                  <label
-                    key={option.id}
-                    className={cn(
-                      'flex cursor-pointer items-start gap-3 border-l-2 py-3 pl-4',
-                      selected ? 'border-l-action bg-paper-2' : 'border-l-transparent hover:bg-paper-2/50'
-                    )}
-                  >
-                    <input
-                      type="radio"
-                      name="aiBehavior"
-                      checked={selected}
-                      onChange={() => { setAiBehavior(option.id); setIsDirty(true); }}
-                      className="mt-1 accent-action"
-                    />
-                    <div>
-                      <div className="font-sans text-[15px] font-medium text-ink-900">{option.label}</div>
-                      <div className="font-sans text-[13px] text-ink-500">{option.desc}</div>
-                    </div>
-                  </label>
-                );
-              })}
-            </div>
-          </section>
+          <InterviewStyleSection
+            draft={{ aiBehavior, setAiBehavior: (v) => { setAiBehavior(v); setIsDirty(true); } } as unknown as StudyDraft}
+            editing={true}
+            onEdit={() => {}}
+          />
+          <Rule />
+
+          <InterviewerMannerSection
+            draft={{ interviewerInstructions, setInterviewerInstructions } as unknown as StudyDraft}
+            editing={true}
+            onEdit={() => {}}
+          />
           <Rule />
 
           {/* Link Settings */}

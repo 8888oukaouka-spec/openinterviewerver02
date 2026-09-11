@@ -4,6 +4,10 @@ import {
 } from '@/types';
 import { readBoundedJsonObject } from './requestBody';
 import { isKnownProviderModel } from './providerRegistry';
+import { CONSENT_TEXT_PLACEHOLDER, CONSENT_TEXT_PLACEHOLDER_ERROR } from './consentText';
+import { BRACKETED_PLACEHOLDER, THANK_YOU_TEXT_PLACEHOLDER_ERROR } from './thankYouText';
+
+import { MAX_INTERVIEWER_INSTRUCTIONS_LENGTH } from './interviewerManner';
 
 export const STUDY_MUTATION_MAX_BYTES = 128 * 1024;
 
@@ -23,6 +27,8 @@ const MAX_PROFILE_OPTION_COUNT = 20;
 const MAX_PROFILE_OPTION_LENGTH = 500;
 const MAX_ID_LENGTH = 200;
 const MAX_MODEL_LENGTH = 200;
+const MAX_RESEARCHER_CONTACT_LENGTH = 200;
+const MAX_THANK_YOU_TEXT_LENGTH = 4_000;
 
 const STUDY_CONFIG_FIELDS = new Set([
   'id',
@@ -37,6 +43,9 @@ const STUDY_CONFIG_FIELDS = new Set([
   'aiModel',
   'aiSynthesisModel',
   'consentText',
+  'researcherContact',
+  'thankYouText',
+  'interviewerInstructions',
   'createdAt',
   'parentStudyId',
   'parentStudyName',
@@ -192,6 +201,21 @@ export function validateStudyConfig(value: unknown): ValidationResult {
     && value.generatedFrom !== 'manual') {
     return { ok: false, error: 'Invalid study lineage type' };
   }
+  if (value.researcherContact !== undefined
+    && !isBoundedString(value.researcherContact, MAX_RESEARCHER_CONTACT_LENGTH, true)) {
+    return { ok: false, error: 'Researcher contact must be 200 characters or fewer' };
+  }
+  // Optional, and not placeholder-checked here: this function also runs on
+  // every participant request via loadCanonicalStudy, and a study saved
+  // before this field existed must keep serving participants (slice-P §P12.2).
+  if (value.thankYouText !== undefined
+    && !isBoundedString(value.thankYouText, MAX_THANK_YOU_TEXT_LENGTH, true)) {
+    return { ok: false, error: 'Thank-you screen must be 4000 characters or fewer' };
+  }
+  if (value.interviewerInstructions !== undefined
+    && !isBoundedString(value.interviewerInstructions, MAX_INTERVIEWER_INSTRUCTIONS_LENGTH, true)) {
+    return { ok: false, error: 'Interviewer instructions must be 4000 characters or fewer' };
+  }
   if (value.linksEnabled !== undefined && typeof value.linksEnabled !== 'boolean') {
     return { ok: false, error: 'Invalid participant link status' };
   }
@@ -233,13 +257,25 @@ export function validateStudyConfigUpdate(
   }
 
   const { id: _id, createdAt: _createdAt, linksEnabled: _embeddedLinkStatus, ...editable } = patch;
-  return validateStudyConfig({
+  const merged = {
     ...current,
     ...editable,
     id: current.id,
     createdAt: current.createdAt,
     linksEnabled: linksEnabled ?? current.linksEnabled,
-  });
+  };
+  for (const field of ['interviewerInstructions', 'thankYouText'] as const) {
+    if (editable[field] === '') delete merged[field];
+  }
+  const result = validateStudyConfig(merged);
+  if (result.ok && CONSENT_TEXT_PLACEHOLDER.test(result.config.consentText)) {
+    return { ok: false, error: CONSENT_TEXT_PLACEHOLDER_ERROR };
+  }
+  if (result.ok && result.config.thankYouText !== undefined
+    && BRACKETED_PLACEHOLDER.test(result.config.thankYouText)) {
+    return { ok: false, error: THANK_YOU_TEXT_PLACEHOLDER_ERROR };
+  }
+  return result;
 }
 
 /** Bounded, strict parsing for researcher study create/update request bodies. */

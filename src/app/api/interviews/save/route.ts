@@ -197,10 +197,15 @@ export async function POST(request: Request) {
       studyRevision: canonical.study.revision ?? 1,
       consentHash: consentRecord!.consentHash,
       consentAcceptedAt: consentRecord!.acceptedAt,
-      aiProvider: synthesisProvenance.aiProvider,
-      aiModel: synthesisProvenance.aiModel,
-      requestedAiModel: synthesisProvenance.requestedAiModel,
-      routedProvider: synthesisProvenance.routedProvider,
+      // The researcher's own choice, at the revision this session is pinned
+      // to. Never from the body: see interviewSubmission.ts's explicit field
+      // copy, which drops any client-asserted conducting model.
+      conductedByProvider: canonical.study.config.aiProvider,
+      conductedByModel: canonical.study.config.aiModel,
+      ...(canonical.study.config.interviewerInstructions !== undefined
+        ? { conductedWithInstructions: canonical.study.config.interviewerInstructions }
+        : {}),
+      analysis: { status: 'pending', attempts: 0, lastAttemptAt: now },
       participantLinkId: linkId,
     };
 
@@ -214,10 +219,11 @@ export async function POST(request: Request) {
       createdAt: clientData.createdAt ?? null,
       consentHash: consentRecord!.consentHash,
       consentAcceptedAt: consentRecord!.acceptedAt,
-      aiProvider: synthesisProvenance.aiProvider,
-      aiModel: synthesisProvenance.aiModel,
-      requestedAiModel: synthesisProvenance.requestedAiModel,
-      routedProvider: synthesisProvenance.routedProvider,
+      conductedByProvider: canonical.study.config.aiProvider,
+      conductedByModel: canonical.study.config.aiModel,
+      ...(canonical.study.config.interviewerInstructions !== undefined
+        ? { conductedWithInstructions: canonical.study.config.interviewerInstructions }
+        : {}),
     });
 
     if (persistRepairOnly) {

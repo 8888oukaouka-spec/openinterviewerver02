@@ -165,6 +165,7 @@ export async function POST(
         : parentStudy.config.topicAreas,
       profileSchema: parentStudy.config.profileSchema,
       aiBehavior: parentStudy.config.aiBehavior,
+      interviewerInstructions: parentStudy.config.interviewerInstructions,
       consentText: parentStudy.config.consentText,
       aiProvider: parentStudy.config.aiProvider,
       aiModel: parentStudy.config.aiModel,
