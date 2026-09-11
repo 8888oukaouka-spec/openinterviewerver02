@@ -1280,7 +1280,7 @@ const StudySetup: React.FC = () => {
               <Field
                 label="Synthesis Model"
                 htmlFor="study-synthesis-model"
-                hint="Model used for post-interview analysis and aggregate synthesis. Gemini 2.5 Pro is on the confirmed free tier; 3.1 Pro Preview offers higher capability."
+                hint="Model used for post-interview analysis and aggregate synthesis. Gemini 2.5 Flash works on the free tier; Gemini 2.5 Pro requires paid API access."
               >
                 <select
                   id="study-synthesis-model"
@@ -1291,8 +1291,8 @@ const StudySetup: React.FC = () => {
                   }}
                   className="w-full"
                 >
-                  <option value="gemini-2.5-pro">Gemini 2.5 Pro (higher quality)</option>
-                  <option value="gemini-2.5-flash">Gemini 2.5 Flash (faster)</option>
+                  <option value="gemini-2.5-flash">Gemini 2.5 Flash (free tier)</option>
+                  <option value="gemini-2.5-pro">Gemini 2.5 Pro (paid API access required)</option>
                 </select>
               </Field>
             )}

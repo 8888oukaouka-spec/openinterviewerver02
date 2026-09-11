@@ -92,6 +92,13 @@ export class GatewayProvider implements AIProvider {
     this.model = model;
   }
 
+  private resolveSynthesisModelForStudy(studyConfig: StudyConfig): string {
+    const requested = studyConfig.aiSynthesisModel;
+    const fallback = resolveSynthesisModel(this.provider);
+    if (requested && isKnownProviderModel(this.provider, requested)) return requested;
+    return fallback;
+  }
+
   private async createText(options: {
     model: string;
     prompt: string;
@@ -222,7 +229,7 @@ export class GatewayProvider implements AIProvider {
     participantProfile: ParticipantProfile | null,
   ): Promise<ProviderResult<SynthesisResult>> {
     const response = await this.createStructured({
-      model: resolveSynthesisModel(this.provider),
+      model: this.resolveSynthesisModelForStudy(studyConfig),
       prompt: buildSynthesisPrompt(history, studyConfig, behaviorData, participantProfile),
       schema: synthesisResponseSchema,
       validate: validateSynthesisResult,
@@ -247,7 +254,7 @@ export class GatewayProvider implements AIProvider {
     interviewCount: number,
   ): Promise<ProviderResult<AggregateSynthesisPayload>> {
     const response = await this.createStructured({
-      model: resolveSynthesisModel(this.provider),
+      model: this.resolveSynthesisModelForStudy(studyConfig),
       prompt: buildAggregateSynthesisPrompt(studyConfig, syntheses, interviewCount),
       schema: aggregateSynthesisResponseSchema,
       validate: validateAggregateSynthesisPayload,
@@ -271,7 +278,7 @@ export class GatewayProvider implements AIProvider {
     synthesis: AggregateSynthesisResult,
   ): Promise<ProviderResult<FollowupStudy>> {
     const response = await this.createStructured({
-      model: resolveSynthesisModel(this.provider),
+      model: this.resolveSynthesisModelForStudy(parentConfig),
       prompt: buildFollowupPrompt(parentConfig, synthesis),
       schema: followupStudyResponseSchema,
       validate: validateFollowupStudy,
