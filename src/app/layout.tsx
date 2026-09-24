@@ -1,29 +1,9 @@
-import type { Metadata } from 'next'
-import { IBM_Plex_Mono, Public_Sans, Source_Serif_4 } from 'next/font/google'
+import type { Metadata, Viewport } from 'next'
+// Self-hosted fonts (src/fonts). fonts.css must precede latin.ts: see its header.
+import '@/fonts/fonts.css'
+import '@/fonts/latin'
 import './globals.css'
 import PreviewBanner from '@/components/PreviewBanner'
-
-const sourceSerif4 = Source_Serif_4({
-  subsets: ['latin'],
-  weight: ['400', '600'],
-  style: ['normal', 'italic'],
-  display: 'swap',
-  variable: '--font-serif',
-})
-
-const publicSans = Public_Sans({
-  subsets: ['latin'],
-  weight: ['400', '500', '600'],
-  display: 'swap',
-  variable: '--font-sans',
-})
-
-const ibmPlexMono = IBM_Plex_Mono({
-  subsets: ['latin'],
-  weight: ['400', '500'],
-  display: 'swap',
-  variable: '--font-mono',
-})
 
 export const metadata: Metadata = {
   title: 'OpenInterviewer',
@@ -36,10 +16,7 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html
-      lang="en"
-      className={`${sourceSerif4.variable} ${publicSans.variable} ${ibmPlexMono.variable}`}
-    >
+    <html lang="en">
       <body className="min-h-dvh bg-paper-0 font-sans text-ink-700 antialiased">
         <PreviewBanner />
         {children}
