@@ -69,14 +69,13 @@ export async function POST(request: Request) {
     }
     const interviews = interviewsMapped.items;
     const currentRevisionInterviews = interviews.filter(
-      interview => interview.studyRevision === study.revision && interview.synthesis
+      interview => interview.synthesis
     );
 
     if (currentRevisionInterviews.length < 2) {
       return NextResponse.json(
         {
-          error: 'Need at least 2 completed interviews from the current study revision',
-          studyRevision: study.revision,
+          error: 'Need at least 2 completed interviews with synthesis data',
           eligibleInterviewCount: currentRevisionInterviews.length,
         },
         { status: 400 }
