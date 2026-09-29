@@ -59,7 +59,7 @@ const aggregate = {
 
 let parentStudy: StoredStudy;
 
-function request(synthesis: unknown) {
+function request(synthesis: unknown = undefined) {
   return new Request('http://localhost/api/studies/study-followup/generate-followup', {
     method: 'POST',
     body: JSON.stringify({ synthesis }),

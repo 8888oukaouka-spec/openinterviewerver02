@@ -2,6 +2,8 @@ import { createHash } from 'crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeStoredInterview } from '../fixtures/models';
 import { CLAUDE_SYNTHESIS_MODEL, GEMINI_SYNTHESIS_MODEL } from '@/types';
+
+const GEMINI_MODEL = 'gemini-3.7-flash';
 import { resolveProviderType, resolveSynthesisModel } from '@/lib/providers';
 
 function canonicalize(value: unknown): unknown {

@@ -1370,7 +1370,7 @@ const StudySetup: React.FC = () => {
           <Rule />
 
           <InterviewStyleSection
-            draft={{ aiBehavior, setAiBehavior: (v) => { setAiBehavior(v); setIsDirty(true); } } as unknown as StudyDraft}
+            draft={{ aiBehavior, setAiBehavior: (v: AIBehavior) => { setAiBehavior(v); setIsDirty(true); } } as unknown as StudyDraft}
             editing={true}
             onEdit={() => {}}
           />
