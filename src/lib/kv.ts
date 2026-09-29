@@ -2,16 +2,18 @@
 // Supports both standalone (env-var singleton) and hosted (per-researcher dynamic) modes
 // All functions accept an optional Redis client parameter for multi-tenant support
 
+import { randomUUID } from 'crypto';
 import type { RedisPort } from './redisPort';
 import { RedisCommitAmbiguousError } from './redisPort';
 import { getKVClient } from './kvClient';
 import { resolveDeploymentMode } from './mode';
-import { StoredInterview, StoredStudy } from '@/types';
+import { StoredInterview, StoredStudy, type SynthesisResult, type InterviewAnalysisFailureKind } from '@/types';
 import { HEX64, MAX_STUDY_REVISION, ok, UNAVAILABLE, type WireResult } from './wire/types';
-import { parseFamilyWire, parsePersistResult, parsePrefixedJson } from './wire/parse';
+import { parseFamilyWire, parsePersistResult, parsePrefixedJson, type AnalysisWireOutcome, parseAnalysisResult } from './wire/parse';
 import { parseStudyCasResult } from './wire/studyCas';
 import type { PersistRatePlanRow } from './rateLimit';
 import { logRequestFailure } from './requestLog';
+import type { SynthesisProvenance } from './synthesisReceipt';
 
 // Key prefixes for organizing data
 const INTERVIEW_PREFIX = 'interview:';
@@ -655,6 +657,38 @@ const INTERVIEW_ID_TOKEN = /^[A-Za-z0-9_-]{1,120}$/;
 export const MAX_ATTACHED_SYNTHESIS_BYTES = 256_000;
 /** How long one claim holds the record before another run may take over. */
 export const ANALYSIS_CLAIM_LEASE_MS = 180_000;
+
+// Lua helper functions for string-level JSON patching used by the analysis script.
+// These avoid re-encoding the full interview record (which would lose cjson
+// type distinctions between empty arrays and empty objects).
+const STUDY_JSON_LUA = `
+local function json_object_value(json_str, key)
+  if type(json_str) ~= 'string' then return nil end
+  local ok, obj = pcall(cjson.decode, json_str)
+  if not ok or type(obj) ~= 'table' then return nil end
+  if obj[key] == nil then return nil end
+  return cjson.encode(obj[key])
+end
+
+local function patch_json_object(json_str, updates)
+  local ok, obj = pcall(cjson.decode, json_str)
+  if not ok or type(obj) ~= 'table' then obj = {} end
+  for _, pair in ipairs(updates) do
+    local vok, val = pcall(cjson.decode, pair[2])
+    if vok then obj[pair[1]] = val else obj[pair[1]] = pair[2] end
+  end
+  return cjson.encode(obj)
+end
+
+local function json_object_members(json_str)
+  local result = {}
+  if type(json_str) ~= 'string' then return result end
+  local ok, obj = pcall(cjson.decode, json_str)
+  if not ok or type(obj) ~= 'table' then return result end
+  for k, v in pairs(obj) do result[#result + 1] = {key = k, value = cjson.encode(v)} end
+  return result
+end
+`;
 
 /** `corrupt`: the stored record exists but its identity members or analysis
  *  state are not the shape this script owns. Nothing was written; a retry

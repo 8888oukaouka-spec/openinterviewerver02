@@ -82,7 +82,8 @@ export type FamilyName =
   | 'byos-mutation'
   | 'persist'
   | 'idempotency'
-  | 'receipt';
+  | 'receipt'
+  | 'analysis';
 
 export type TagPayloadKind =
   | 'string'    // any non-empty string value leaf

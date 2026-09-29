@@ -23,17 +23,24 @@ import {
   resumeAccountDeletion,
 } from '@/lib/platformDb';
 import {
+  ANALYSIS_CLAIM_LEASE_MS,
   CREATE_STUDY_SCRIPT,
   DELETE_EMPTY_STUDY_SCRIPT,
+  attachInterviewAnalysis,
+  claimInterviewAnalysis,
   createStudyAtomic,
   deleteStudy,
   encodeMutationGuard,
+  encodeInterviewValue,
+  getInterviewChecked,
   persistCompletedInterviewFinish,
   persistCompletedInterviewP1,
+  recordInterviewAnalysisFailure,
   type PersistingGuard,
 } from '@/lib/kv';
+import type { RedisPort } from '@/lib/redisPort';
 import { BEGIN_STUDY_OPERATION_SCRIPT } from '@/lib/platformDb.operations';
-import { makeStoredInterview, makeStoredStudy } from '../fixtures/models';
+import { makeStoredInterview, makeStoredStudy, makeStudyConfig } from '../fixtures/models';
 import {
   startDisposableRedis,
   type DisposableRedis,
