@@ -43,6 +43,8 @@ const StudyDetail: React.FC<StudyDetailProps> = ({ studyId }) => {
   const [linksError, setLinksError] = useState<string | null>(null);
   const [revokingLinkId, setRevokingLinkId] = useState<string | null>(null);
   const [operationPending, setOperationPending] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isDeletingStudy, setIsDeletingStudy] = useState(false);
   const [storageUnavailable, setStorageUnavailable] = useState<string | null>(null);
   const [isReconciling, setIsReconciling] = useState(false);
 
@@ -226,6 +228,28 @@ const StudyDetail: React.FC<StudyDetailProps> = ({ studyId }) => {
       alert(error instanceof Error ? error.message : 'Failed to revoke participant link');
     } finally {
       setRevokingLinkId(null);
+    }
+  };
+
+  const handleForceDeleteStudy = async () => {
+    if (isDeletingStudy) return;
+    setIsDeletingStudy(true);
+    try {
+      const response = await fetch(`/api/studies/${encodeURIComponent(studyId)}/force-delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: true }),
+      });
+      const data = await response.json() as { error?: string };
+      if (!response.ok) {
+        alert(data.error || 'Failed to delete study. Please try again.');
+        setIsDeletingStudy(false);
+        return;
+      }
+      router.push('/studies');
+    } catch {
+      alert('Failed to delete study. Please try again.');
+      setIsDeletingStudy(false);
     }
   };
 
@@ -902,6 +926,62 @@ const StudyDetail: React.FC<StudyDetailProps> = ({ studyId }) => {
                 Each click generates a new unique link. All links share the same enable/disable toggle above.
                 {!(study.config.linksEnabled ?? true) && ' Links are currently disabled - enable access above first.'}
               </p>
+            </div>
+          </div>
+
+          {/* Danger Zone */}
+          <div className="mt-8">
+            <Rule />
+            <div className="mt-6">
+              <h3 className="font-sans text-[15px] font-semibold text-error">Danger Zone</h3>
+              <p className="mt-2 text-[13px] text-ink-500">
+                Permanently delete this study and all associated data.
+              </p>
+
+              {!showDeleteConfirm ? (
+                <Button
+                  variant="quiet"
+                  onClick={() => setShowDeleteConfirm(true)}
+                  disabled={operationPending || isDeletingStudy}
+                  className="mt-4 border border-error text-error hover:bg-error hover:text-paper-1"
+                >
+                  Delete Study
+                </Button>
+              ) : (
+                <div className="mt-4 rounded border border-error bg-paper-2 p-4">
+                  <p className="text-[13px] font-semibold text-error">
+                    Are you sure you want to delete this study?
+                  </p>
+                  <p className="mt-2 text-[13px] text-ink-700">
+                    This will permanently delete:
+                  </p>
+                  <ul className="mt-1 list-inside list-disc text-[13px] text-ink-700">
+                    <li>The study configuration</li>
+                    <li>All {study.interviewCount} interview{study.interviewCount !== 1 ? 's' : ''} and their transcripts</li>
+                    <li>All synthesis and analysis results</li>
+                  </ul>
+                  <p className="mt-2 text-[13px] font-semibold text-ink-900">
+                    This action cannot be undone.
+                  </p>
+                  <div className="mt-4 flex gap-3">
+                    <Button
+                      variant="quiet"
+                      onClick={() => setShowDeleteConfirm(false)}
+                      disabled={isDeletingStudy}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      variant="quiet"
+                      onClick={handleForceDeleteStudy}
+                      disabled={isDeletingStudy}
+                      className="border border-error text-error hover:bg-error hover:text-paper-1"
+                    >
+                      {isDeletingStudy ? 'Deleting...' : 'Yes, delete everything'}
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

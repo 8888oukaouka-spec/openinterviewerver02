@@ -1030,6 +1030,37 @@ export async function deleteInterview(id: string, studyId: string, client?: Redi
   }
 }
 
+// Force-delete a study and all its interviews. Bypasses the empty-study
+// guard. Use only after explicit researcher confirmation.
+export async function forceDeleteStudy(
+  studyId: string,
+  client?: RedisPort,
+): Promise<{ status: 'deleted' | 'not-found' | 'unavailable' }> {
+  try {
+    const kv = resolveClient(client);
+    const indexKey = `${STUDY_INDEX_PREFIX}${studyId}`;
+    const interviewIds = (await kv.smembers(indexKey)) as string[];
+    if (interviewIds.length > 0) {
+      await Promise.all(
+        interviewIds.map((id) =>
+          Promise.all([
+            kv.del(`${INTERVIEW_PREFIX}${id}`),
+            kv.srem(ALL_INTERVIEWS_KEY, id),
+          ])
+        )
+      );
+      await kv.del(indexKey);
+    }
+    const studyKey = `${STUDY_PREFIX}${studyId}`;
+    const existed = await kv.del(studyKey);
+    await kv.srem(ALL_STUDIES_KEY, studyId);
+    return { status: existed ? 'deleted' : 'not-found' };
+  } catch (error) {
+    logRequestFailure({ event: 'kv.unavailable' }, error);
+    return { status: 'unavailable' };
+  }
+}
+
 // Check if KV is available (for development without KV)
 export async function isKVAvailable(client?: RedisPort): Promise<boolean> {
   try {
