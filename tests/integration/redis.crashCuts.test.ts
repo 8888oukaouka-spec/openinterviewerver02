@@ -33,6 +33,7 @@ import {
   encodeMutationGuard,
   encodeInterviewValue,
   getInterviewChecked,
+  persistCompletedInterview,
   persistCompletedInterviewFinish,
   persistCompletedInterviewP1,
   recordInterviewAnalysisFailure,
