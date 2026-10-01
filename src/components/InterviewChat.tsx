@@ -11,6 +11,37 @@ import { InterviewMessage, InterviewPhase } from '@/types';
 import ReactMarkdown from 'react-markdown';
 import { Button, Turn } from '@/components/ui';
 
+// Minimal Web Speech API types — not included in all TypeScript lib.dom versions
+interface SpeechRecognitionEvent extends Event {
+  readonly resultIndex: number;
+  readonly results: {
+    readonly length: number;
+    [index: number]: {
+      readonly isFinal: boolean;
+      [index: number]: { readonly transcript: string };
+    };
+  };
+}
+interface SpeechRecognitionInstance extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start(): void;
+  stop(): void;
+  onresult: ((event: SpeechRecognitionEvent) => void) | null;
+  onerror: ((event: Event) => void) | null;
+  onend: (() => void) | null;
+}
+type SpeechRecognitionCtor = new () => SpeechRecognitionInstance;
+
+function getSpeechRecognitionCtor(): SpeechRecognitionCtor | null {
+  if (typeof window === 'undefined') return null;
+  const w = window as unknown as Record<string, unknown>;
+  return (w['SpeechRecognition'] as SpeechRecognitionCtor | undefined)
+    ?? (w['webkitSpeechRecognition'] as SpeechRecognitionCtor | undefined)
+    ?? null;
+}
+
 // Phase display labels
 const phaseLabels: Record<InterviewPhase, string> = {
   'background': 'Getting to know you',
@@ -54,7 +85,7 @@ const InterviewChat: React.FC = () => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mountedRef = useRef(true);
   const greetingStartedRef = useRef(false);
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -65,9 +96,7 @@ const InterviewChat: React.FC = () => {
 
   // Check Web Speech API support once on mount
   useEffect(() => {
-    const supported = typeof window !== 'undefined'
-      && (typeof window.SpeechRecognition !== 'undefined'
-        || typeof (window as unknown as Record<string, unknown>).webkitSpeechRecognition !== 'undefined');
+    const supported = getSpeechRecognitionCtor() !== null;
     setSpeechSupported(supported);
     return () => {
       recognitionRef.current?.stop();
@@ -285,10 +314,7 @@ const InterviewChat: React.FC = () => {
   };
 
   const startListening = () => {
-    const SpeechRecognitionCtor = (
-      window.SpeechRecognition
-      || (window as unknown as Record<string, unknown>).webkitSpeechRecognition
-    ) as (new () => SpeechRecognition) | undefined;
+    const SpeechRecognitionCtor = getSpeechRecognitionCtor();
     if (!SpeechRecognitionCtor) return;
 
     const recognition = new SpeechRecognitionCtor();
