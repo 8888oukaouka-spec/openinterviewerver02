@@ -413,12 +413,14 @@ const StudyDetail: React.FC<StudyDetailProps> = ({ studyId }) => {
           <span className={`font-sans text-[13px] ${study.isLocked ? 'text-ink-500' : 'text-success'}`}>
             {study.isLocked ? 'Locked' : 'Editable'}
           </span>
+        </div>
+        <div className="mt-4 flex justify-end">
           <a
             href={`/api/studies/${encodeURIComponent(studyId)}/export`}
             download
-            className="font-sans text-[13px] text-ink-500 underline-offset-2 hover:text-ink-900 hover:underline"
+            className="rounded border border-ink-300 bg-transparent px-4 py-2 font-sans text-[15px] font-medium text-ink-900 transition-colors hover:bg-paper-2"
           >
-            Export transcripts
+            Export Study ↓
           </a>
         </div>
       </div>

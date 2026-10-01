@@ -441,7 +441,7 @@ export default function StudyList() {
                   onClick={() => setMenuOpenId(null)}
                   className="block w-full px-3 py-2 text-left text-[13px] text-ink-700 hover:bg-paper-2"
                 >
-                  Export Transcripts
+                  Export Study
                 </a>
               )}
               <button
