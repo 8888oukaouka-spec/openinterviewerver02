@@ -36,7 +36,7 @@ export const buildGreetingPrompt = (studyConfig: StudyConfig): string => {
     .map(f => f.label.toLowerCase())
     .slice(0, 3);
 
-  return `You are starting a research interview.
+  return `You are generating the FIRST message the participant will see in a research interview. There is no prior conversation — your output is sent directly to the participant as the opening message.
 
 Study: ${studyConfig.name}
 Research Question: ${studyConfig.researchQuestion}
@@ -49,6 +49,8 @@ ${GREETING_OPENING} that:
 3. Asks an opening background question that naturally gathers their ${profileFieldLabels[0] || 'background'} and context
 
 ${GREETING_QUESTION_CRAFT} ${GREETING_PROFILE}
+
+Write the message directly. Do not use phrases like "assuming you've already..." or reference any prior steps — there are none.
 
 ${buildInterviewerMannerBlock(studyConfig, GREETING_MANNER_PRECEDENCE)}`;
 };
