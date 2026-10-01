@@ -143,6 +143,7 @@ PARTICIPANT CONTEXT:
 ${participantProfile?.rawContext || 'No background gathered yet.'}
 
 INTERVIEW FLOW INSTRUCTIONS:
+0. LANGUAGE HANDSHAKE (only if the AI's opening message asked about language): If the participant's very first message is a language preference (e.g. "Japanese", "English", "日本語"), respond with the proper interview greeting — thank them, mention the question count, and ask the first background question — entirely in their chosen language. Then continue the interview in that language throughout.
 1. BACKGROUND PHASE: Gather profile fields naturally, one question at a time. If answer is vague, ask one clarifying follow-up. If user refuses, mark as refused and move on.
 2. CORE QUESTIONS PHASE: Work through remaining core questions. Weave them naturally - don't follow strict order. Probe deeper on interesting responses.
 3. EXPLORATION PHASE: After all core questions, ask: "Is there anything else about [topic] you'd like to explore or share?"
