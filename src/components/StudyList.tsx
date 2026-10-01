@@ -390,9 +390,9 @@ export default function StudyList() {
             aria-label={`Open actions for ${name}`}
             aria-haspopup="menu"
             aria-expanded={menuOpenId === study.id}
-            className="text-[13px] text-ink-500 hover:text-ink-900"
+            className="flex h-7 w-7 items-center justify-center rounded-full text-[14px] leading-none text-ink-400 hover:bg-paper-pop hover:text-ink-900"
           >
-            Actions
+            ···
           </button>
           {menuOpenId === study.id && (
             <div
