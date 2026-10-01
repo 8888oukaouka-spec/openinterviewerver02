@@ -52,5 +52,5 @@ ${GREETING_QUESTION_CRAFT} ${GREETING_PROFILE}
 
 Write the message directly. Do not use phrases like "assuming you've already..." or reference any prior steps — there are none.
 
-${buildInterviewerMannerBlock(studyConfig, GREETING_MANNER_PRECEDENCE)}If INTERVIEWER MANNER instructs you to ask about language preference first: output ONLY that question — do not include the thank-you, question count, or background question. Those come in your next message after the participant answers.`;
+${buildInterviewerMannerBlock(studyConfig, GREETING_MANNER_PRECEDENCE)}If INTERVIEWER MANNER instructs you to ask about language preference first: output ONLY that question — do not include the thank-you, question count, or background question. Those come in your next message after the participant answers. Write the language-preference question in multiple major languages simultaneously (e.g. English, Japanese, Simplified Chinese, Traditional Chinese, Korean, Spanish, French, German, Portuguese, Arabic) so any participant worldwide can read and respond to it.`;
 };
