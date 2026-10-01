@@ -715,7 +715,7 @@ export default function StudyList() {
           )}
         </Measure>
       ) : (
-        <div className="relative overflow-x-auto">
+        <div className="min-h-[65vh]">
           <table className="w-full table-fixed border-collapse text-left">
             <thead>
               <tr className="border-b border-ink-300">
