@@ -46,16 +46,31 @@ const InterviewChat: React.FC = () => {
   const [showFinishOption, setShowFinishOption] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [isListening, setIsListening] = useState(false);
+  const [interimText, setInterimText] = useState('');
+  const [speechSupported, setSpeechSupported] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mountedRef = useRef(true);
   const greetingStartedRef = useRef(false);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+    };
+  }, []);
+
+  // Check Web Speech API support once on mount
+  useEffect(() => {
+    const supported = typeof window !== 'undefined'
+      && (typeof window.SpeechRecognition !== 'undefined'
+        || typeof (window as unknown as Record<string, unknown>).webkitSpeechRecognition !== 'undefined');
+    setSpeechSupported(supported);
+    return () => {
+      recognitionRef.current?.stop();
     };
   }, []);
 
@@ -262,6 +277,69 @@ const InterviewChat: React.FC = () => {
     completeInterview();
   };
 
+  const stopListening = () => {
+    recognitionRef.current?.stop();
+    recognitionRef.current = null;
+    setIsListening(false);
+    setInterimText('');
+  };
+
+  const startListening = () => {
+    const SpeechRecognitionCtor = (
+      window.SpeechRecognition
+      || (window as unknown as Record<string, unknown>).webkitSpeechRecognition
+    ) as (new () => SpeechRecognition) | undefined;
+    if (!SpeechRecognitionCtor) return;
+
+    const recognition = new SpeechRecognitionCtor();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = navigator.language || 'en-US';
+
+    recognition.onresult = (event) => {
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          const word = transcript.trim();
+          if (word) {
+            setInput(prev => {
+              const base = prev.trimEnd();
+              return base ? base + ' ' + word : word;
+            });
+          }
+        } else {
+          interim += transcript;
+        }
+      }
+      setInterimText(interim);
+    };
+
+    recognition.onerror = () => {
+      setIsListening(false);
+      setInterimText('');
+      recognitionRef.current = null;
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+      setInterimText('');
+      recognitionRef.current = null;
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+    setIsListening(true);
+  };
+
+  const toggleListening = () => {
+    if (isListening) {
+      stopListening();
+    } else {
+      startListening();
+    }
+  };
+
   const handleViewAnalysis = () => {
     setStep('synthesis');
     router.push('/synthesis');
@@ -377,7 +455,7 @@ const InterviewChat: React.FC = () => {
                 )}
               </div>
             )}
-            <div className="flex items-end gap-3">
+            <div className="flex items-end gap-2">
               <div className="flex-1">
                 <label htmlFor="interview-response" className="sr-only">
                   Your response
@@ -388,17 +466,52 @@ const InterviewChat: React.FC = () => {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleTextareaKeyDown}
-                  placeholder="Take as much space as you need."
+                  placeholder={isListening ? 'Listening… speak now' : 'Take as much space as you need.'}
                   disabled={isAiThinking}
                   rows={3}
                   className="input-verbatim w-full resize-none rounded border border-ink-300 bg-paper-2 px-4 py-3 text-[17px] leading-[1.6] text-ink-900 placeholder:text-ink-500 disabled:opacity-50"
                 />
+                {/* Live interim transcript */}
+                {isListening && interimText && (
+                  <p className="mt-1 px-1 text-[14px] italic text-ink-400">{interimText}</p>
+                )}
               </div>
+
+              {/* Microphone button — only shown when browser supports Web Speech API */}
+              {speechSupported && (
+                <button
+                  type="button"
+                  onClick={toggleListening}
+                  disabled={isAiThinking}
+                  aria-label={isListening ? 'Stop recording' : 'Start voice input'}
+                  aria-pressed={isListening}
+                  className={`mb-[1px] flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full transition-colors disabled:opacity-40 ${
+                    isListening
+                      ? 'animate-pulse bg-error text-paper-1'
+                      : 'bg-paper-2 text-ink-600 hover:bg-paper-pop hover:text-ink-900'
+                  }`}
+                >
+                  {isListening ? (
+                    // Stop icon
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <rect x="5" y="5" width="14" height="14" rx="2" />
+                    </svg>
+                  ) : (
+                    // Microphone icon
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <rect x="9" y="2" width="6" height="12" rx="3" />
+                      <path d="M5 10a7 7 0 0 0 14 0" />
+                      <line x1="12" y1="17" x2="12" y2="21" />
+                      <line x1="9" y1="21" x2="15" y2="21" />
+                    </svg>
+                  )}
+                </button>
+              )}
 
               <Button
                 type="button"
                 variant="primary"
-                onClick={() => handleSend()}
+                onClick={() => { stopListening(); void handleSend(); }}
                 disabled={!input.trim() || isAiThinking}
               >
                 Send
