@@ -434,6 +434,16 @@ export default function StudyList() {
                   Move to Project…
                 </button>
               )}
+              {!pending && (
+                <a
+                  href={`/api/studies/${encodeURIComponent(study.id)}/export`}
+                  download
+                  onClick={() => setMenuOpenId(null)}
+                  className="block w-full px-3 py-2 text-left text-[13px] text-ink-700 hover:bg-paper-2"
+                >
+                  Export Transcripts
+                </a>
+              )}
               <button
                 type="button"
                 onClick={() => handleDelete(study.id)}
@@ -540,6 +550,14 @@ export default function StudyList() {
                       >
                         Rename
                       </button>
+                      <a
+                        href={`/api/projects/${encodeURIComponent(project.id)}/export`}
+                        download
+                        onClick={() => setProjectMenuOpenId(null)}
+                        className="block w-full px-3 py-2 text-left text-[13px] text-ink-700 hover:bg-paper-2"
+                      >
+                        Export Project
+                      </a>
                       <button
                         type="button"
                         onClick={() => { setProjectMenuOpenId(null); void handleDeleteProject(project); }}

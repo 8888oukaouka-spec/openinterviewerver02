@@ -413,6 +413,13 @@ const StudyDetail: React.FC<StudyDetailProps> = ({ studyId }) => {
           <span className={`font-sans text-[13px] ${study.isLocked ? 'text-ink-500' : 'text-success'}`}>
             {study.isLocked ? 'Locked' : 'Editable'}
           </span>
+          <a
+            href={`/api/studies/${encodeURIComponent(studyId)}/export`}
+            download
+            className="font-sans text-[13px] text-ink-500 underline-offset-2 hover:text-ink-900 hover:underline"
+          >
+            Export transcripts
+          </a>
         </div>
       </div>
 
