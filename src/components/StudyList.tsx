@@ -677,31 +677,31 @@ export default function StudyList() {
         </Measure>
       ) : (
         <div className="relative overflow-x-auto">
-          <table className="w-full border-collapse text-left">
+          <table className="w-full table-fixed border-collapse text-left">
             <thead>
               <tr className="border-b border-ink-300">
                 <th scope="col" className="px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500">
                   {hasProjects ? 'Project / Study' : 'Study'}
                 </th>
-                <th scope="col" className="px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500">
+                <th scope="col" className="w-24 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500">
                   Interviews
                 </th>
                 <th
                   scope="col"
-                  className="hidden px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500 md:table-cell"
+                  className="hidden w-32 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500 md:table-cell"
                 >
                   Created
                 </th>
                 <th
                   scope="col"
-                  className="hidden px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500 md:table-cell"
+                  className="hidden w-24 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500 md:table-cell"
                 >
                   Questions
                 </th>
-                <th scope="col" className="px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500">
+                <th scope="col" className="w-24 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500">
                   Status
                 </th>
-                <th scope="col" className="px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500">
+                <th scope="col" className="w-20 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500">
                   <span className="sr-only">Actions</span>
                 </th>
               </tr>
