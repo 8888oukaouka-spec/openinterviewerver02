@@ -50,6 +50,19 @@ export default function StudyList() {
 
   const [projectMenuOpenId, setProjectMenuOpenId] = useState<string | null>(null);
 
+  // Close any open dropdown when clicking outside it
+  useEffect(() => {
+    if (menuOpenId === null && projectMenuOpenId === null) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Element;
+      if (target.closest('[data-dropdown]') || target.closest('[data-dropdown-trigger]')) return;
+      setMenuOpenId(null);
+      setProjectMenuOpenId(null);
+    };
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, [menuOpenId, projectMenuOpenId]);
+
   const actionsTriggerRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const projectMenuTriggerRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const newProjectInputRef = useRef<HTMLInputElement>(null);
@@ -371,6 +384,7 @@ export default function StudyList() {
         >
           <button
             type="button"
+            data-dropdown-trigger
             ref={(el) => { actionsTriggerRefs.current[study.id] = el; }}
             onClick={() => setMenuOpenId(menuOpenId === study.id ? null : study.id)}
             aria-label={`Open actions for ${name}`}
@@ -382,6 +396,7 @@ export default function StudyList() {
           </button>
           {menuOpenId === study.id && (
             <div
+              data-dropdown
               className="absolute right-0 z-10 mt-1 w-52 rounded border border-ink-300 bg-paper-1 shadow-note"
               onKeyDown={(event) => {
                 if (event.key === 'Escape') {
@@ -497,6 +512,7 @@ export default function StudyList() {
                 <div className="relative">
                   <button
                     type="button"
+                    data-dropdown-trigger
                     ref={(el) => { projectMenuTriggerRefs.current[project.id] = el; }}
                     onClick={() => setProjectMenuOpenId(projectMenuOpenId === project.id ? null : project.id)}
                     aria-label={`More options for ${project.name}`}
@@ -508,6 +524,7 @@ export default function StudyList() {
                   </button>
                   {projectMenuOpenId === project.id && (
                     <div
+                      data-dropdown
                       className="absolute right-0 z-10 mt-1 w-32 rounded border border-ink-300 bg-paper-1 shadow-note"
                       onKeyDown={(e) => {
                         if (e.key === 'Escape') {
