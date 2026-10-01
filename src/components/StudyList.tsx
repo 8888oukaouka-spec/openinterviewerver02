@@ -48,7 +48,10 @@ export default function StudyList() {
   const [moveStudyId, setMoveStudyId] = useState<string | null>(null);
   const [movingStudy, setMovingStudy] = useState(false);
 
+  const [projectMenuOpenId, setProjectMenuOpenId] = useState<string | null>(null);
+
   const actionsTriggerRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const projectMenuTriggerRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const newProjectInputRef = useRef<HTMLInputElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
 
@@ -245,6 +248,7 @@ export default function StudyList() {
     setEditingProjectId(project.id);
     setEditingProjectName(project.name);
     setMenuOpenId(null);
+    setProjectMenuOpenId(null);
   };
 
   const commitRename = async () => {
@@ -479,21 +483,56 @@ export default function StudyList() {
 
             {/* Project actions (right-aligned) */}
             {!isEditing && (
-              <div className="ml-auto flex items-center gap-3">
+              <div className="ml-auto flex items-center gap-1">
+                {/* + Study */}
                 <button
                   type="button"
-                  onClick={() => startRename(project)}
-                  className="text-[12px] text-ink-500 hover:text-ink-900"
+                  onClick={() => router.push('/setup')}
+                  className="rounded-full border border-ink-300 px-3 py-0.5 text-[12px] text-ink-700 hover:bg-paper-pop hover:text-ink-900"
                 >
-                  Rename
+                  + Study
                 </button>
-                <button
-                  type="button"
-                  onClick={() => void handleDeleteProject(project)}
-                  className="text-[12px] text-ink-500 hover:text-error"
-                >
-                  Delete
-                </button>
+
+                {/* ··· menu */}
+                <div className="relative">
+                  <button
+                    type="button"
+                    ref={(el) => { projectMenuTriggerRefs.current[project.id] = el; }}
+                    onClick={() => setProjectMenuOpenId(projectMenuOpenId === project.id ? null : project.id)}
+                    aria-label={`More options for ${project.name}`}
+                    aria-haspopup="menu"
+                    aria-expanded={projectMenuOpenId === project.id}
+                    className="flex h-6 w-8 items-center justify-center rounded-full border border-ink-300 text-[14px] leading-none text-ink-500 hover:bg-paper-pop hover:text-ink-900"
+                  >
+                    ···
+                  </button>
+                  {projectMenuOpenId === project.id && (
+                    <div
+                      className="absolute right-0 z-10 mt-1 w-32 rounded border border-ink-300 bg-paper-1 shadow-note"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') {
+                          setProjectMenuOpenId(null);
+                          projectMenuTriggerRefs.current[project.id]?.focus();
+                        }
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => startRename(project)}
+                        className="block w-full px-3 py-2 text-left text-[13px] text-ink-700 hover:bg-paper-2"
+                      >
+                        Rename
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setProjectMenuOpenId(null); void handleDeleteProject(project); }}
+                        className="block w-full px-3 py-2 text-left text-[13px] text-error hover:bg-paper-2"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
