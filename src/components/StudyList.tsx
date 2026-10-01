@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { isPendingStudyStub, StudyWorkspaceItem } from '@/types';
 import {
@@ -9,11 +9,14 @@ import {
   reconcileStudyOperations,
   getAllProjects,
   createNewProject,
+  renameProject,
   removeProject,
   moveStudyToProject,
   type StoredProject,
 } from '@/services/storageService';
 import { Button, Coordinate, Label, Measure, Rule } from '@/components/ui';
+
+const UNCATEGORIZED_KEY = '__uncategorized__';
 
 export default function StudyList() {
   const router = useRouter();
@@ -29,28 +32,51 @@ export default function StudyList() {
   const [operationNotice, setOperationNotice] = useState<string | null>(null);
   const [isReconciling, setIsReconciling] = useState(false);
 
-  // Project state
-  const [filterProjectId, setFilterProjectId] = useState<string | 'all'>('all');
-  const [showCreateProject, setShowCreateProject] = useState(false);
+  // Project accordion state
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+
+  // New project form
+  const [showNewProjectForm, setShowNewProjectForm] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [creatingProject, setCreatingProject] = useState(false);
+
+  // Inline rename
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
+  const [editingProjectName, setEditingProjectName] = useState('');
+
+  // Move study modal
   const [moveStudyId, setMoveStudyId] = useState<string | null>(null);
   const [movingStudy, setMovingStudy] = useState(false);
 
   const actionsTriggerRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const newProjectInputRef = useRef<HTMLInputElement>(null);
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
-  const projectById = useMemo(
-    () => new Map(projects.map(p => [p.id, p])),
-    [projects],
-  );
+  // Derived: group studies by project
+  const { projectGroups, uncategorized } = useMemo(() => {
+    const assigned = new Set<string>();
+    const groups = projects.map(p => {
+      const pStudies = studies.filter(s => {
+        if (isPendingStudyStub(s)) return false;
+        return s.projectId === p.id;
+      });
+      pStudies.forEach(s => assigned.add(s.id));
+      return { project: p, studies: pStudies };
+    });
+    const unc = studies.filter(s => !assigned.has(s.id));
+    return { projectGroups: groups, uncategorized: unc };
+  }, [studies, projects]);
 
-  const filteredStudies = useMemo(() => {
-    if (filterProjectId === 'all') return studies;
-    if (filterProjectId === 'none') {
-      return studies.filter(s => isPendingStudyStub(s) || !s.projectId);
-    }
-    return studies.filter(s => !isPendingStudyStub(s) && s.projectId === filterProjectId);
-  }, [studies, filterProjectId]);
+  const hasProjects = projects.length > 0;
+
+  const toggleCollapse = (key: string) => {
+    setCollapsed(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -115,6 +141,18 @@ export default function StudyList() {
     void initializeWorkspace();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (showNewProjectForm) {
+      newProjectInputRef.current?.focus();
+    }
+  }, [showNewProjectForm]);
+
+  useEffect(() => {
+    if (editingProjectId) {
+      renameInputRef.current?.focus();
+    }
+  }, [editingProjectId]);
 
   const handleDelete = async (id: string) => {
     if (!confirm('Are you sure you want to delete this study? This cannot be undone.')) {
@@ -192,7 +230,7 @@ export default function StudyList() {
       if (result.project) {
         setProjects(prev => [result.project!, ...prev]);
         setNewProjectName('');
-        setShowCreateProject(false);
+        setShowNewProjectForm(false);
       } else {
         alert(result.error || 'Failed to create project');
       }
@@ -203,14 +241,31 @@ export default function StudyList() {
     }
   };
 
-  const handleDeleteProject = async (projectId: string, projectName: string) => {
-    if (!confirm(`Delete project "${projectName}"? Studies in this project will become uncategorized.`)) return;
-    const result = await removeProject(projectId);
+  const startRename = (project: StoredProject) => {
+    setEditingProjectId(project.id);
+    setEditingProjectName(project.name);
+    setMenuOpenId(null);
+  };
+
+  const commitRename = async () => {
+    if (!editingProjectId) return;
+    const name = editingProjectName.trim();
+    if (!name) { setEditingProjectId(null); return; }
+    const result = await renameProject(editingProjectId, name);
+    if (result.project) {
+      setProjects(prev => prev.map(p => p.id === editingProjectId ? result.project! : p));
+    } else {
+      alert(result.error || 'Failed to rename project');
+    }
+    setEditingProjectId(null);
+  };
+
+  const handleDeleteProject = async (project: StoredProject) => {
+    if (!confirm(`Delete project "${project.name}"? Studies in this project will become uncategorized. Interview data is not deleted.`)) return;
+    const result = await removeProject(project.id);
     if (result.success) {
-      setProjects(prev => prev.filter(p => p.id !== projectId));
-      // Refresh studies to clear their projectId
+      setProjects(prev => prev.filter(p => p.id !== project.id));
       await loadData();
-      if (filterProjectId === projectId) setFilterProjectId('all');
     } else {
       alert(result.error || 'Failed to delete project');
     }
@@ -222,19 +277,7 @@ export default function StudyList() {
     try {
       const result = await moveStudyToProject(moveStudyId, targetProjectId);
       if (result.success) {
-        // Update local study projectId so UI reflects immediately
-        setStudies(prev => prev.map(s => {
-          if (s.id !== moveStudyId || isPendingStudyStub(s)) return s;
-          return { ...s, projectId: targetProjectId ?? undefined };
-        }));
-        // Update project studyCounts
-        setProjects(prev => prev.map(p => {
-          const study = studies.find(s => s.id === moveStudyId && !isPendingStudyStub(s));
-          const oldProjectId = study && !isPendingStudyStub(study) ? study.projectId : undefined;
-          if (p.id === oldProjectId) return { ...p, studyCount: Math.max(0, p.studyCount - 1) };
-          if (p.id === targetProjectId) return { ...p, studyCount: p.studyCount + 1 };
-          return p;
-        }));
+        await loadData();
         setMoveStudyId(null);
       } else {
         alert(result.error || 'Failed to move study');
@@ -266,30 +309,242 @@ export default function StudyList() {
     buttons[nextIndex]?.focus();
   };
 
-  const moveStudySubject = moveStudyId
-    ? studies.find(s => s.id === moveStudyId)
-    : null;
+  const moveStudySubject = moveStudyId ? studies.find(s => s.id === moveStudyId) : null;
   const moveStudyName = moveStudySubject && !isPendingStudyStub(moveStudySubject)
-    ? moveStudySubject.config.name
-    : '';
+    ? moveStudySubject.config.name : '';
   const moveStudyCurrentProjectId = moveStudySubject && !isPendingStudyStub(moveStudySubject)
-    ? moveStudySubject.projectId ?? null
-    : null;
+    ? moveStudySubject.projectId ?? null : null;
+
+  // Renders a study as a table row. Used in both flat and accordion views.
+  const renderStudyRow = (study: StudyWorkspaceItem, indent = false) => {
+    const pending = isPendingStudyStub(study);
+    const name = pending ? 'Study change pending' : study.config.name;
+    return (
+      <tr
+        key={study.id}
+        className="border-b border-ink-200 hover:bg-paper-1"
+        onClick={() => router.push(`/studies/${study.id}`)}
+      >
+        <td className={`px-3 py-3 align-top text-[13px] text-ink-700 ${indent ? 'pl-10' : ''}`}>
+          <button
+            type="button"
+            data-row-primary
+            onClick={(event) => {
+              event.stopPropagation();
+              router.push(`/studies/${study.id}`);
+            }}
+            className="text-left font-sans text-[14px] font-medium text-ink-900 underline-offset-2 hover:text-action hover:underline"
+          >
+            {name}
+          </button>
+          {pending ? (
+            <p className="text-[13px] text-ink-500">Reconciliation pending ({study.phase})</p>
+          ) : study.config.description ? (
+            <p className="line-clamp-1 text-[13px] text-ink-500">{study.config.description}</p>
+          ) : null}
+        </td>
+        <td className="px-3 py-3 align-top text-[13px] text-ink-700">
+          <Coordinate>{pending ? 0 : study.interviewCount}</Coordinate>
+        </td>
+        <td className="hidden px-3 py-3 align-top text-[13px] text-ink-700 md:table-cell">
+          <Coordinate>{pending ? '—' : formatDate(study.createdAt)}</Coordinate>
+        </td>
+        <td className="hidden px-3 py-3 align-top text-[13px] text-ink-700 md:table-cell">
+          <Coordinate>{pending ? '—' : study.config.coreQuestions.length}</Coordinate>
+        </td>
+        <td className="px-3 py-3 align-top text-[13px] text-ink-700">
+          {pending ? (
+            <span className="text-error">Reconciliation pending</span>
+          ) : (
+            <span className={study.isLocked ? 'text-ink-500' : 'text-success'}>
+              {study.isLocked ? 'Locked' : 'Editable'}
+            </span>
+          )}
+        </td>
+        <td
+          className="relative px-3 py-3 align-top text-[13px]"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            ref={(el) => { actionsTriggerRefs.current[study.id] = el; }}
+            onClick={() => setMenuOpenId(menuOpenId === study.id ? null : study.id)}
+            aria-label={`Open actions for ${name}`}
+            aria-haspopup="menu"
+            aria-expanded={menuOpenId === study.id}
+            className="text-[13px] text-ink-500 hover:text-ink-900"
+          >
+            Actions
+          </button>
+          {menuOpenId === study.id && (
+            <div
+              className="absolute right-0 z-10 mt-1 w-52 rounded border border-ink-300 bg-paper-1 shadow-note"
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  setMenuOpenId(null);
+                  actionsTriggerRefs.current[study.id]?.focus();
+                }
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => { router.push(`/studies/${study.id}`); setMenuOpenId(null); }}
+                className="block w-full px-3 py-2 text-left text-[13px] text-ink-700 hover:bg-paper-2"
+              >
+                View Details
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (pending) return;
+                  sessionStorage.setItem('prefillStudyConfig', JSON.stringify(study.config));
+                  router.push(`/setup?prefill=edit&studyId=${study.id}`);
+                  setMenuOpenId(null);
+                }}
+                disabled={pending}
+                className="block w-full px-3 py-2 text-left text-[13px] text-ink-700 hover:bg-paper-2 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Edit &amp; Generate Link
+              </button>
+              {hasProjects && !pending && (
+                <button
+                  type="button"
+                  onClick={() => { setMoveStudyId(study.id); setMenuOpenId(null); }}
+                  className="block w-full px-3 py-2 text-left text-[13px] text-ink-700 hover:bg-paper-2"
+                >
+                  Move to Project…
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => handleDelete(study.id)}
+                disabled={pending || deletingId === study.id || (!pending && study.interviewCount > 0)}
+                className="block w-full px-3 py-2 text-left text-[13px] text-error hover:bg-paper-2 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Delete
+              </button>
+            </div>
+          )}
+        </td>
+      </tr>
+    );
+  };
+
+  // Project accordion header row (spans all columns)
+  const renderProjectHeader = (project: StoredProject, studyCount: number) => {
+    const isCollapsed = collapsed.has(project.id);
+    const isEditing = editingProjectId === project.id;
+    return (
+      <tr key={`project-${project.id}`} className="border-b border-ink-300 bg-paper-2">
+        <td colSpan={6} className="px-3 py-2">
+          <div className="flex items-center gap-2">
+            {/* Toggle button */}
+            <button
+              type="button"
+              onClick={() => toggleCollapse(project.id)}
+              aria-label={isCollapsed ? `Expand ${project.name}` : `Collapse ${project.name}`}
+              className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-[11px] text-ink-500 hover:bg-paper-pop hover:text-ink-900"
+            >
+              {isCollapsed ? '▶' : '▼'}
+            </button>
+
+            {/* Project name — editable or display */}
+            {isEditing ? (
+              <input
+                ref={renameInputRef}
+                type="text"
+                value={editingProjectName}
+                onChange={e => setEditingProjectName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') void commitRename();
+                  if (e.key === 'Escape') setEditingProjectId(null);
+                }}
+                onBlur={() => void commitRename()}
+                maxLength={200}
+                className="flex-1 rounded border border-action bg-paper-pop px-2 py-0.5 text-[14px] font-medium text-ink-900 outline-none"
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => toggleCollapse(project.id)}
+                className="text-left text-[14px] font-semibold text-ink-900"
+              >
+                {project.name}
+              </button>
+            )}
+
+            <span className="text-[12px] text-ink-400">
+              {studyCount} {studyCount === 1 ? 'study' : 'studies'}
+            </span>
+
+            {/* Project actions (right-aligned) */}
+            {!isEditing && (
+              <div className="ml-auto flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => startRename(project)}
+                  className="text-[12px] text-ink-500 hover:text-ink-900"
+                >
+                  Rename
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleDeleteProject(project)}
+                  className="text-[12px] text-ink-500 hover:text-error"
+                >
+                  Delete
+                </button>
+              </div>
+            )}
+          </div>
+        </td>
+      </tr>
+    );
+  };
+
+  // Section header for uncategorized studies
+  const renderUncategorizedHeader = () => {
+    const isCollapsed = collapsed.has(UNCATEGORIZED_KEY);
+    return (
+      <tr key="uncategorized-header" className="border-b border-ink-300 bg-paper-2">
+        <td colSpan={6} className="px-3 py-2">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => toggleCollapse(UNCATEGORIZED_KEY)}
+              aria-label={isCollapsed ? 'Expand uncategorized' : 'Collapse uncategorized'}
+              className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-[11px] text-ink-500 hover:bg-paper-pop hover:text-ink-900"
+            >
+              {isCollapsed ? '▶' : '▼'}
+            </button>
+            <span className="text-[14px] font-semibold text-ink-700">Uncategorized</span>
+            <span className="text-[12px] text-ink-400">
+              {uncategorized.length} {uncategorized.length === 1 ? 'study' : 'studies'}
+            </span>
+          </div>
+        </td>
+      </tr>
+    );
+  };
 
   return (
     <div>
-      {/* Header */}
+      {/* Page header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="font-sans text-[24px] leading-[32px] font-semibold text-ink-900">My Research</h1>
           <p className="text-[13px] text-ink-500">
             {studies.length} {studies.length === 1 ? 'study' : 'studies'}
-            {projects.length > 0 && ` across ${projects.length} ${projects.length === 1 ? 'project' : 'projects'}`}
+            {hasProjects && ` across ${projects.length} ${projects.length === 1 ? 'project' : 'projects'}`}
           </p>
         </div>
         <div className="flex flex-wrap gap-2 sm:justify-end">
-          <Button type="button" variant="quiet" onClick={() => setShowCreateProject(v => !v)}>
-            {showCreateProject ? 'Cancel' : 'New Project'}
+          <Button
+            type="button"
+            variant="quiet"
+            onClick={() => { setShowNewProjectForm(v => !v); setNewProjectName(''); }}
+          >
+            {showNewProjectForm ? 'Cancel' : 'New Project'}
           </Button>
           <Button type="button" variant="primary" onClick={() => router.push('/setup')}>
             Create Study
@@ -311,16 +566,19 @@ export default function StudyList() {
         </div>
       </div>
 
-      {/* Create Project inline form */}
-      {showCreateProject && (
-        <div className="mt-4 flex items-center gap-2 border border-ink-300 bg-paper-1 px-4 py-3 rounded">
+      {/* New Project inline form */}
+      {showNewProjectForm && (
+        <div className="mt-4 flex items-center gap-2 rounded border border-action bg-paper-1 px-4 py-3">
           <input
+            ref={newProjectInputRef}
             type="text"
             value={newProjectName}
             onChange={e => setNewProjectName(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') void handleCreateProject(); if (e.key === 'Escape') { setShowCreateProject(false); setNewProjectName(''); } }}
+            onKeyDown={e => {
+              if (e.key === 'Enter') void handleCreateProject();
+              if (e.key === 'Escape') { setShowNewProjectForm(false); setNewProjectName(''); }
+            }}
             placeholder="Project name…"
-            autoFocus
             maxLength={200}
             className="flex-1 bg-transparent text-[14px] text-ink-900 placeholder-ink-400 outline-none"
           />
@@ -337,38 +595,7 @@ export default function StudyList() {
 
       <Rule className="my-6" />
 
-      {/* Filter bar — show only when there are projects */}
-      {projects.length > 0 && (
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500">Filter:</span>
-          <button
-            type="button"
-            onClick={() => setFilterProjectId('all')}
-            className={`rounded px-2 py-1 text-[12px] ${filterProjectId === 'all' ? 'bg-ink-900 text-paper-1' : 'bg-paper-2 text-ink-700 hover:bg-paper-pop'}`}
-          >
-            All
-          </button>
-          {projects.map(p => (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => setFilterProjectId(p.id)}
-              className={`rounded px-2 py-1 text-[12px] ${filterProjectId === p.id ? 'bg-ink-900 text-paper-1' : 'bg-paper-2 text-ink-700 hover:bg-paper-pop'}`}
-            >
-              {p.name} ({p.studyCount})
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={() => setFilterProjectId('none')}
-            className={`rounded px-2 py-1 text-[12px] ${filterProjectId === 'none' ? 'bg-ink-900 text-paper-1' : 'bg-paper-2 text-ink-700 hover:bg-paper-pop'}`}
-          >
-            Uncategorized
-          </button>
-        </div>
-      )}
-
-      {/* Warnings */}
+      {/* Status banners */}
       {kvWarning && (
         <div className="mb-6 border-l-2 border-error bg-paper-2 px-4 py-3">
           <Label>
@@ -419,33 +646,10 @@ export default function StudyList() {
         </div>
       )}
 
-      {/* Projects list (compact) — only when there are projects */}
-      {!loading && projects.length > 0 && filterProjectId === 'all' && (
-        <div className="mb-6">
-          <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500">Projects</h2>
-          <div className="flex flex-wrap gap-2">
-            {projects.map(p => (
-              <div key={p.id} className="flex items-center gap-1 rounded border border-ink-300 bg-paper-1 px-3 py-2">
-                <span className="text-[13px] font-medium text-ink-900">{p.name}</span>
-                <span className="text-[12px] text-ink-500 ml-1">({p.studyCount})</span>
-                <button
-                  type="button"
-                  onClick={() => void handleDeleteProject(p.id, p.name)}
-                  aria-label={`Delete project ${p.name}`}
-                  className="ml-2 text-[11px] text-ink-400 hover:text-error"
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* Main content */}
       {loading ? (
         <p className="text-[13px] text-ink-500">Loading…</p>
-      ) : studies.length === 0 ? (
+      ) : studies.length === 0 && !hasProjects ? (
         <Measure>
           <h2 className="font-sans text-[18px] font-semibold text-ink-900">
             {kvWarning ? 'Workspace unavailable' : 'No Studies Yet'}
@@ -471,24 +675,14 @@ export default function StudyList() {
             </p>
           )}
         </Measure>
-      ) : filteredStudies.length === 0 ? (
-        <p className="text-[13px] text-ink-500">No studies match this filter.</p>
       ) : (
         <div className="relative overflow-x-auto">
           <table className="w-full border-collapse text-left">
             <thead>
               <tr className="border-b border-ink-300">
                 <th scope="col" className="px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500">
-                  Study
+                  {hasProjects ? 'Project / Study' : 'Study'}
                 </th>
-                {projects.length > 0 && (
-                  <th
-                    scope="col"
-                    className="hidden px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500 md:table-cell"
-                  >
-                    Project
-                  </th>
-                )}
                 <th scope="col" className="px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500">
                   Interviews
                 </th>
@@ -513,144 +707,39 @@ export default function StudyList() {
               </tr>
             </thead>
             <tbody onKeyDown={handleTbodyKeyDown}>
-              {filteredStudies.map((study) => {
-                const pending = isPendingStudyStub(study);
-                const name = pending ? 'Study change pending' : study.config.name;
-                const studyProjectId = !pending ? study.projectId : undefined;
-                const studyProject = studyProjectId ? projectById.get(studyProjectId) : undefined;
-                return (
-                  <tr
-                    key={study.id}
-                    className="border-b border-ink-200 hover:bg-paper-1"
-                    onClick={() => router.push(`/studies/${study.id}`)}
-                  >
-                    <td className="px-3 py-3 align-top text-[13px] text-ink-700">
-                      <button
-                        type="button"
-                        data-row-primary
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          router.push(`/studies/${study.id}`);
-                        }}
-                        className="text-left font-sans text-[14px] font-medium text-ink-900 underline-offset-2 hover:text-action hover:underline"
-                      >
-                        {name}
-                      </button>
-                      {pending ? (
-                        <p className="text-[13px] text-ink-500">Reconciliation pending ({study.phase})</p>
-                      ) : study.config.description ? (
-                        <p className="line-clamp-1 text-[13px] text-ink-500">{study.config.description}</p>
-                      ) : null}
-                    </td>
-                    {projects.length > 0 && (
-                      <td className="hidden px-3 py-3 align-top text-[13px] text-ink-500 md:table-cell">
-                        {studyProject ? (
-                          <button
-                            type="button"
-                            onClick={e => { e.stopPropagation(); setFilterProjectId(studyProject.id); }}
-                            className="text-[13px] text-action hover:underline"
-                          >
-                            {studyProject.name}
-                          </button>
+              {hasProjects ? (
+                // Accordion view: projects as primary rows, studies as secondary rows
+                <>
+                  {projectGroups.map(({ project, studies: pStudies }) => (
+                    <Fragment key={project.id}>
+                      {renderProjectHeader(project, pStudies.length)}
+                      {!collapsed.has(project.id) && (
+                        pStudies.length === 0 ? (
+                          <tr className="border-b border-ink-200">
+                            <td colSpan={6} className="px-10 py-3 text-[13px] text-ink-400 italic">
+                              No studies in this project yet.
+                            </td>
+                          </tr>
                         ) : (
-                          <span className="text-ink-400">—</span>
-                        )}
-                      </td>
-                    )}
-                    <td className="px-3 py-3 align-top text-[13px] text-ink-700">
-                      <Coordinate>{pending ? 0 : study.interviewCount}</Coordinate>
-                    </td>
-                    <td className="hidden px-3 py-3 align-top text-[13px] text-ink-700 md:table-cell">
-                      <Coordinate>{pending ? '—' : formatDate(study.createdAt)}</Coordinate>
-                    </td>
-                    <td className="hidden px-3 py-3 align-top text-[13px] text-ink-700 md:table-cell">
-                      <Coordinate>{pending ? '—' : study.config.coreQuestions.length}</Coordinate>
-                    </td>
-                    <td className="px-3 py-3 align-top text-[13px] text-ink-700">
-                      {pending ? (
-                        <span className="text-error">Reconciliation pending</span>
-                      ) : (
-                        <span className={study.isLocked ? 'text-ink-500' : 'text-success'}>
-                          {study.isLocked ? 'Locked' : 'Editable'}
-                        </span>
+                          pStudies.map(s => renderStudyRow(s, true))
+                        )
                       )}
-                    </td>
-                    <td
-                      className="relative px-3 py-3 align-top text-[13px]"
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      <button
-                        type="button"
-                        ref={(el) => {
-                          actionsTriggerRefs.current[study.id] = el;
-                        }}
-                        onClick={() => setMenuOpenId(menuOpenId === study.id ? null : study.id)}
-                        aria-label={`Open actions for ${name}`}
-                        aria-haspopup="menu"
-                        aria-expanded={menuOpenId === study.id}
-                        className="text-[13px] text-ink-500 hover:text-ink-900"
-                      >
-                        Actions
-                      </button>
-                      {menuOpenId === study.id && (
-                        <div
-                          className="absolute right-0 z-10 mt-1 w-52 rounded border border-ink-300 bg-paper-1 shadow-note"
-                          onKeyDown={(event) => {
-                            if (event.key === 'Escape') {
-                              setMenuOpenId(null);
-                              actionsTriggerRefs.current[study.id]?.focus();
-                            }
-                          }}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => {
-                              router.push(`/studies/${study.id}`);
-                              setMenuOpenId(null);
-                            }}
-                            className="block w-full px-3 py-2 text-left text-[13px] text-ink-700 hover:bg-paper-2"
-                          >
-                            View Details
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (pending) return;
-                              sessionStorage.setItem('prefillStudyConfig', JSON.stringify(study.config));
-                              router.push(`/setup?prefill=edit&studyId=${study.id}`);
-                              setMenuOpenId(null);
-                            }}
-                            disabled={pending}
-                            className="block w-full px-3 py-2 text-left text-[13px] text-ink-700 hover:bg-paper-2 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            Edit &amp; Generate Link
-                          </button>
-                          {projects.length > 0 && !pending && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setMoveStudyId(study.id);
-                                setMenuOpenId(null);
-                              }}
-                              className="block w-full px-3 py-2 text-left text-[13px] text-ink-700 hover:bg-paper-2"
-                            >
-                              Move to Project…
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => handleDelete(study.id)}
-                            disabled={pending || deletingId === study.id || (!pending && study.interviewCount > 0)}
-                            className="block w-full px-3 py-2 text-left text-[13px] text-error hover:bg-paper-2 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
+                    </Fragment>
+                  ))}
+                  {/* Uncategorized section */}
+                  {uncategorized.length > 0 && (
+                    <Fragment key={UNCATEGORIZED_KEY}>
+                      {renderUncategorizedHeader()}
+                      {!collapsed.has(UNCATEGORIZED_KEY) &&
+                        uncategorized.map(s => renderStudyRow(s, true))
+                      }
+                    </Fragment>
+                  )}
+                </>
+              ) : (
+                // Flat view: no projects, just studies
+                studies.map(s => renderStudyRow(s, false))
+              )}
             </tbody>
           </table>
         </div>
@@ -667,7 +756,7 @@ export default function StudyList() {
             onClick={e => e.stopPropagation()}
           >
             <h3 className="mb-1 font-sans text-[16px] font-semibold text-ink-900">Move to Project</h3>
-            <p className="mb-4 text-[13px] text-ink-500 line-clamp-1">{moveStudyName}</p>
+            <p className="mb-4 line-clamp-1 text-[13px] text-ink-500">{moveStudyName}</p>
             <div className="flex flex-col gap-1">
               {projects.map(p => (
                 <button
