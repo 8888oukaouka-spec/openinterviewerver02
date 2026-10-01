@@ -22,6 +22,9 @@ interface SpeechRecognitionEvent extends Event {
     };
   };
 }
+interface SpeechRecognitionErrorEvent extends Event {
+  readonly error: string;
+}
 interface SpeechRecognitionInstance extends EventTarget {
   continuous: boolean;
   interimResults: boolean;
@@ -29,7 +32,7 @@ interface SpeechRecognitionInstance extends EventTarget {
   start(): void;
   stop(): void;
   onresult: ((event: SpeechRecognitionEvent) => void) | null;
-  onerror: ((event: Event) => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
   onend: (() => void) | null;
 }
 type SpeechRecognitionCtor = new () => SpeechRecognitionInstance;
@@ -105,6 +108,7 @@ const InterviewChat: React.FC = () => {
   const [interimText, setInterimText] = useState('');
   const [speechSupported, setSpeechSupported] = useState(false);
   const [speechLang, setSpeechLang] = useState('en-US');
+  const [speechError, setSpeechError] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -367,10 +371,20 @@ const InterviewChat: React.FC = () => {
       setInterimText(interim);
     };
 
-    recognition.onerror = () => {
+    recognition.onerror = (event) => {
       setIsListening(false);
       setInterimText('');
       recognitionRef.current = null;
+      const code = event.error;
+      if (code === 'not-allowed' || code === 'service-not-allowed') {
+        setSpeechError('Microphone access was denied. Please allow microphone permission and try again.');
+      } else if (code === 'network') {
+        setSpeechError('Speech recognition requires an internet connection and may not work in all regions. Try using Chrome.');
+      } else if (code === 'language-not-supported') {
+        setSpeechError(`"${speechLang}" is not supported by your browser's speech recognition. Try Chrome, or switch to English.`);
+      } else if (code !== 'aborted' && code !== 'no-speech') {
+        setSpeechError(`Speech recognition stopped (${code}). For best language support, use Chrome.`);
+      }
     };
 
     recognition.onend = () => {
@@ -380,6 +394,7 @@ const InterviewChat: React.FC = () => {
     };
 
     recognitionRef.current = recognition;
+    setSpeechError(null);
     recognition.start();
     setIsListening(true);
   };
@@ -506,6 +521,10 @@ const InterviewChat: React.FC = () => {
                   </button>
                 )}
               </div>
+            )}
+            {/* Speech recognition error */}
+            {speechError && (
+              <p className="text-[13px] text-error">{speechError}</p>
             )}
             {/* Unified pill input — mirrors Gemini's single-container layout */}
             <div className={`flex items-end gap-3 rounded-2xl border bg-paper-2 px-4 py-3 shadow-sm transition-colors ${isListening ? 'border-error' : 'border-ink-300'}`}>
