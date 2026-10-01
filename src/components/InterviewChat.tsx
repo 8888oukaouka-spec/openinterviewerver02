@@ -42,6 +42,30 @@ function getSpeechRecognitionCtor(): SpeechRecognitionCtor | null {
     ?? null;
 }
 
+// Language options for voice input
+const SPEECH_LANGS = [
+  { code: 'en-US', label: 'English (US)' },
+  { code: 'en-GB', label: 'English (UK)' },
+  { code: 'ja-JP', label: '日本語' },
+  { code: 'zh-CN', label: '中文 (简体)' },
+  { code: 'zh-TW', label: '中文 (繁體)' },
+  { code: 'ko-KR', label: '한국어' },
+  { code: 'es-ES', label: 'Español' },
+  { code: 'fr-FR', label: 'Français' },
+  { code: 'de-DE', label: 'Deutsch' },
+  { code: 'pt-BR', label: 'Português' },
+  { code: 'it-IT', label: 'Italiano' },
+  { code: 'nl-NL', label: 'Nederlands' },
+  { code: 'ar-SA', label: 'العربية' },
+  { code: 'hi-IN', label: 'हिन्दी' },
+] as const;
+
+function pickSpeechLang(): string {
+  const browserCode = (navigator.languages?.[0] ?? navigator.language ?? '').toLowerCase();
+  const prefix = browserCode.split('-')[0];
+  return SPEECH_LANGS.find(l => l.code.toLowerCase().startsWith(prefix))?.code ?? 'en-US';
+}
+
 // Phase display labels
 const phaseLabels: Record<InterviewPhase, string> = {
   'background': 'Getting to know you',
@@ -80,6 +104,7 @@ const InterviewChat: React.FC = () => {
   const [isListening, setIsListening] = useState(false);
   const [interimText, setInterimText] = useState('');
   const [speechSupported, setSpeechSupported] = useState(false);
+  const [speechLang, setSpeechLang] = useState('en-US');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -98,6 +123,7 @@ const InterviewChat: React.FC = () => {
   useEffect(() => {
     const supported = getSpeechRecognitionCtor() !== null;
     setSpeechSupported(supported);
+    if (supported) setSpeechLang(pickSpeechLang());
     return () => {
       recognitionRef.current?.stop();
     };
@@ -320,7 +346,7 @@ const InterviewChat: React.FC = () => {
     const recognition = new SpeechRecognitionCtor();
     recognition.continuous = true;
     recognition.interimResults = true;
-    recognition.lang = navigator.language || 'en-US';
+    recognition.lang = speechLang;
 
     recognition.onresult = (event) => {
       let interim = '';
@@ -503,35 +529,48 @@ const InterviewChat: React.FC = () => {
                 )}
               </div>
 
-              {/* Microphone button — only shown when browser supports Web Speech API */}
+              {/* Language picker + mic — only shown when browser supports Web Speech API */}
               {speechSupported && (
-                <button
-                  type="button"
-                  onClick={toggleListening}
-                  disabled={isAiThinking}
-                  aria-label={isListening ? 'Stop recording' : 'Start voice input'}
-                  aria-pressed={isListening}
-                  className={`mb-[1px] flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full transition-colors disabled:opacity-40 ${
-                    isListening
-                      ? 'animate-pulse bg-error text-paper-1'
-                      : 'bg-paper-2 text-ink-600 hover:bg-paper-pop hover:text-ink-900'
-                  }`}
-                >
-                  {isListening ? (
-                    // Stop icon
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                      <rect x="5" y="5" width="14" height="14" rx="2" />
-                    </svg>
-                  ) : (
-                    // Microphone icon
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <rect x="9" y="2" width="6" height="12" rx="3" />
-                      <path d="M5 10a7 7 0 0 0 14 0" />
-                      <line x1="12" y1="17" x2="12" y2="21" />
-                      <line x1="9" y1="21" x2="15" y2="21" />
-                    </svg>
-                  )}
-                </button>
+                <>
+                  <select
+                    value={speechLang}
+                    onChange={(e) => setSpeechLang(e.target.value)}
+                    disabled={isListening || isAiThinking}
+                    aria-label="Voice input language"
+                    className="h-10 self-end rounded border border-ink-300 bg-paper-2 px-2 text-[12px] text-ink-700 disabled:opacity-40"
+                  >
+                    {SPEECH_LANGS.map((lang) => (
+                      <option key={lang.code} value={lang.code}>{lang.label}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={toggleListening}
+                    disabled={isAiThinking}
+                    aria-label={isListening ? 'Stop recording' : 'Start voice input'}
+                    aria-pressed={isListening}
+                    className={`mb-[1px] flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full transition-colors disabled:opacity-40 ${
+                      isListening
+                        ? 'animate-pulse bg-error text-paper-1'
+                        : 'bg-paper-2 text-ink-600 hover:bg-paper-pop hover:text-ink-900'
+                    }`}
+                  >
+                    {isListening ? (
+                      // Stop icon
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <rect x="5" y="5" width="14" height="14" rx="2" />
+                      </svg>
+                    ) : (
+                      // Microphone icon
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <rect x="9" y="2" width="6" height="12" rx="3" />
+                        <path d="M5 10a7 7 0 0 0 14 0" />
+                        <line x1="12" y1="17" x2="12" y2="21" />
+                        <line x1="9" y1="21" x2="15" y2="21" />
+                      </svg>
+                    )}
+                  </button>
+                </>
               )}
 
               <Button
