@@ -397,6 +397,20 @@ export interface StoredStudy {
   interviewCount: number;        // Cached count for dashboard display
   isLocked: boolean;             // True after first interview collected
   revision: number;              // Monotonic config/link-status revision
+  projectId?: string;            // Optional project grouping
+}
+
+// ============================================
+// Project (grouping layer above studies)
+// ============================================
+
+export interface StoredProject {
+  id: string;
+  name: string;
+  description?: string;
+  createdAt: number;
+  updatedAt: number;
+  studyCount: number;
 }
 
 export interface PendingStudyStub {

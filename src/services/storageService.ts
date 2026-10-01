@@ -1,7 +1,8 @@
 // Storage Service - Client-side interface for interview storage
 // Calls API routes which interact with Upstash Redis
 
-import { isPendingStudyStub, PendingStudyStub, StoredInterview, StoredStudy, StudyConfig, StudyWorkspaceItem, SynthesisResult } from '@/types';
+import { isPendingStudyStub, PendingStudyStub, StoredInterview, StoredProject, StoredStudy, StudyConfig, StudyWorkspaceItem, SynthesisResult } from '@/types';
+export type { StoredProject };
 import { logRequestEvent, logRequestFailure } from '@/lib/requestLog';
 import { buildParticipantOrPreviewHeaders } from '@/services/participantHeaders';
 export { isPendingStudyStub };
@@ -488,5 +489,107 @@ export async function reconcileStudyOperations(): Promise<StudyReconciliationRes
       stillPending: 0,
       error: 'Study reconciliation is temporarily unavailable.',
     };
+  }
+}
+
+// ============================================
+// Project Service Functions
+// ============================================
+
+export async function getAllProjects(): Promise<{
+  projects: StoredProject[];
+  error?: string;
+}> {
+  try {
+    const response = await fetch('/api/projects');
+    const data = await response.json();
+    if (!response.ok) {
+      return { projects: [], error: data.error || 'Failed to load projects.' };
+    }
+    return { projects: Array.isArray(data.projects) ? data.projects : [] };
+  } catch (error) {
+    logRequestFailure({ event: 'route.failure' }, error);
+    return { projects: [], error: 'Failed to load projects.' };
+  }
+}
+
+export async function createNewProject(
+  name: string,
+  description?: string,
+): Promise<{ project?: StoredProject; error?: string }> {
+  try {
+    const response = await fetch('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, description }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      return { error: data.error || 'Failed to create project.' };
+    }
+    return { project: data.project };
+  } catch (error) {
+    logRequestFailure({ event: 'route.failure' }, error);
+    return { error: 'Failed to create project.' };
+  }
+}
+
+export async function renameProject(
+  id: string,
+  name: string,
+  description?: string,
+): Promise<{ project?: StoredProject; error?: string }> {
+  try {
+    const response = await fetch(`/api/projects/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, description }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      return { error: data.error || 'Failed to rename project.' };
+    }
+    return { project: data.project };
+  } catch (error) {
+    logRequestFailure({ event: 'route.failure' }, error);
+    return { error: 'Failed to rename project.' };
+  }
+}
+
+export async function removeProject(id: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const response = await fetch(`/api/projects/${id}`, { method: 'DELETE' });
+    const data = await response.json();
+    if (!response.ok) {
+      return { success: false, error: data.error || 'Failed to delete project.' };
+    }
+    return { success: true };
+  } catch (error) {
+    logRequestFailure({ event: 'route.failure' }, error);
+    return { success: false, error: 'Failed to delete project.' };
+  }
+}
+
+export async function moveStudyToProject(
+  studyId: string,
+  projectId: string | null,
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    // For "remove", route ID doesn't matter — the server ignores it when action='remove'.
+    const routeId = projectId ?? 'none';
+    const action = projectId ? 'assign' : 'remove';
+    const response = await fetch(`/api/projects/${routeId}/studies`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ studyId, action }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      return { success: false, error: data.error || 'Failed to update project assignment.' };
+    }
+    return { success: true };
+  } catch (error) {
+    logRequestFailure({ event: 'route.failure' }, error);
+    return { success: false, error: 'Failed to update project assignment.' };
   }
 }

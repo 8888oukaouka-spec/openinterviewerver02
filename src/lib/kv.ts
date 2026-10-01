@@ -7,7 +7,7 @@ import type { RedisPort } from './redisPort';
 import { RedisCommitAmbiguousError } from './redisPort';
 import { getKVClient } from './kvClient';
 import { resolveDeploymentMode } from './mode';
-import { StoredInterview, StoredStudy, type SynthesisResult, type InterviewAnalysisFailureKind } from '@/types';
+import { StoredInterview, StoredProject, StoredStudy, type SynthesisResult, type InterviewAnalysisFailureKind } from '@/types';
 import { HEX64, MAX_STUDY_REVISION, ok, UNAVAILABLE, type WireResult } from './wire/types';
 import { parseFamilyWire, parsePersistResult, parsePrefixedJson, type AnalysisWireOutcome, parseAnalysisResult } from './wire/parse';
 import { parseStudyCasResult } from './wire/studyCas';
@@ -21,6 +21,9 @@ const STUDY_INDEX_PREFIX = 'study-interviews:';
 const STUDY_PREFIX = 'study:';
 const ALL_STUDIES_KEY = 'all-studies';
 const ALL_INTERVIEWS_KEY = 'all-interviews';
+const PROJECT_PREFIX = 'project:';
+const ALL_PROJECTS_KEY = 'all-projects';
+const PROJECT_STUDIES_PREFIX = 'project-studies:';
 export const INTERVIEW_VALUE_PREFIX = 'oi:interview:';
 export const STUDY_VALUE_PREFIX = 'oi:study:';
 export const FINGERPRINT_VALUE_PREFIX = 'oi:fp:';
@@ -1052,9 +1055,160 @@ export async function forceDeleteStudy(
       await kv.del(indexKey);
     }
     const studyKey = `${STUDY_PREFIX}${studyId}`;
+    const studyRaw = await kv.get(studyKey);
+    const study = asStoredStudy(studyRaw);
+    const existingProjectId = study?.projectId ?? null;
     const existed = await kv.del(studyKey);
     await kv.srem(ALL_STUDIES_KEY, studyId);
+    if (existingProjectId) {
+      await kv.srem(`${PROJECT_STUDIES_PREFIX}${existingProjectId}`, studyId);
+      const proj = asStoredProject(await kv.get(`${PROJECT_PREFIX}${existingProjectId}`));
+      if (proj) {
+        proj.studyCount = Math.max(0, proj.studyCount - 1);
+        proj.updatedAt = Date.now();
+        await kv.set(`${PROJECT_PREFIX}${existingProjectId}`, JSON.stringify(proj));
+      }
+    }
     return { status: existed ? 'deleted' : 'not-found' };
+  } catch (error) {
+    logRequestFailure({ event: 'kv.unavailable' }, error);
+    return { status: 'unavailable' };
+  }
+}
+
+// ============================================
+// Project Storage Functions
+// ============================================
+
+function asStoredProject(value: unknown): StoredProject | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const rec = value as Record<string, unknown>;
+  if (typeof rec.id !== 'string' || !rec.id) return null;
+  if (typeof rec.name !== 'string' || !rec.name) return null;
+  if (!Number.isFinite(rec.createdAt) || !Number.isFinite(rec.updatedAt)) return null;
+  if (!Number.isFinite(rec.studyCount) || (rec.studyCount as number) < 0) return null;
+  return value as StoredProject;
+}
+
+export async function createProject(project: StoredProject, client?: RedisPort): Promise<boolean> {
+  try {
+    const kv = resolveClient(client);
+    await kv.set(`${PROJECT_PREFIX}${project.id}`, JSON.stringify(project));
+    await kv.sadd(ALL_PROJECTS_KEY, project.id);
+    return true;
+  } catch (error) {
+    logRequestFailure({ event: 'kv.unavailable' }, error);
+    return false;
+  }
+}
+
+export async function getProject(id: string, client?: RedisPort): Promise<StoredProject | null> {
+  try {
+    const kv = resolveClient(client);
+    return asStoredProject(await kv.get(`${PROJECT_PREFIX}${id}`));
+  } catch (error) {
+    logRequestFailure({ event: 'kv.unavailable' }, error);
+    return null;
+  }
+}
+
+export async function updateProject(project: StoredProject, client?: RedisPort): Promise<boolean> {
+  try {
+    const kv = resolveClient(client);
+    await kv.set(`${PROJECT_PREFIX}${project.id}`, JSON.stringify(project));
+    return true;
+  } catch (error) {
+    logRequestFailure({ event: 'kv.unavailable' }, error);
+    return false;
+  }
+}
+
+export async function listProjectsChecked(
+  client?: RedisPort,
+  maximum = 500,
+): Promise<CollectionLoadResult<StoredProject>> {
+  try {
+    const kv = resolveClient(client);
+    const count = await kv.scard(ALL_PROJECTS_KEY);
+    if (count > maximum) return { status: 'too-large', count, maximum };
+    const ids = (await kv.smembers(ALL_PROJECTS_KEY)) as string[];
+    if (!ids || ids.length === 0) return { status: 'ok', items: [] };
+    const raws = await Promise.all(ids.map(id => kv.get(`${PROJECT_PREFIX}${id}`)));
+    return {
+      status: 'ok',
+      items: raws
+        .map(asStoredProject)
+        .filter((p): p is StoredProject => p !== null)
+        .sort((a, b) => b.createdAt - a.createdAt),
+    };
+  } catch (error) {
+    logRequestFailure({ event: 'kv.unavailable' }, error);
+    return { status: 'unavailable' };
+  }
+}
+
+export async function deleteProject(
+  id: string,
+  client?: RedisPort,
+): Promise<{ status: 'deleted' | 'not-found' | 'unavailable' }> {
+  try {
+    const kv = resolveClient(client);
+    // Orphan studies by clearing their projectId
+    const studyIds = (await kv.smembers(`${PROJECT_STUDIES_PREFIX}${id}`)) as string[];
+    if (studyIds.length > 0) {
+      await Promise.all(studyIds.map(async (studyId) => {
+        const study = asStoredStudy(await kv.get(`${STUDY_PREFIX}${studyId}`));
+        if (study && study.projectId === id) {
+          study.projectId = undefined;
+          await kv.set(`${STUDY_PREFIX}${studyId}`, JSON.stringify(study));
+        }
+      }));
+      await kv.del(`${PROJECT_STUDIES_PREFIX}${id}`);
+    }
+    const existed = await kv.del(`${PROJECT_PREFIX}${id}`);
+    await kv.srem(ALL_PROJECTS_KEY, id);
+    return { status: existed ? 'deleted' : 'not-found' };
+  } catch (error) {
+    logRequestFailure({ event: 'kv.unavailable' }, error);
+    return { status: 'unavailable' };
+  }
+}
+
+export async function assignStudyToProject(
+  studyId: string,
+  projectId: string | null,
+  client?: RedisPort,
+): Promise<{ status: 'ok' | 'not-found' | 'unavailable' }> {
+  try {
+    const kv = resolveClient(client);
+    const study = asStoredStudy(await kv.get(`${STUDY_PREFIX}${studyId}`));
+    if (!study) return { status: 'not-found' };
+
+    const oldProjectId = study.projectId ?? null;
+    if (oldProjectId === projectId) return { status: 'ok' };
+
+    study.projectId = projectId !== null ? projectId : undefined;
+    await kv.set(`${STUDY_PREFIX}${studyId}`, JSON.stringify(study));
+
+    if (oldProjectId) {
+      await kv.srem(`${PROJECT_STUDIES_PREFIX}${oldProjectId}`, studyId);
+      const oldProj = asStoredProject(await kv.get(`${PROJECT_PREFIX}${oldProjectId}`));
+      if (oldProj) {
+        oldProj.studyCount = Math.max(0, oldProj.studyCount - 1);
+        oldProj.updatedAt = Date.now();
+        await kv.set(`${PROJECT_PREFIX}${oldProjectId}`, JSON.stringify(oldProj));
+      }
+    }
+    if (projectId) {
+      await kv.sadd(`${PROJECT_STUDIES_PREFIX}${projectId}`, studyId);
+      const newProj = asStoredProject(await kv.get(`${PROJECT_PREFIX}${projectId}`));
+      if (newProj) {
+        newProj.studyCount = newProj.studyCount + 1;
+        newProj.updatedAt = Date.now();
+        await kv.set(`${PROJECT_PREFIX}${projectId}`, JSON.stringify(newProj));
+      }
+    }
+    return { status: 'ok' };
   } catch (error) {
     logRequestFailure({ event: 'kv.unavailable' }, error);
     return { status: 'unavailable' };
