@@ -420,7 +420,7 @@ const StudyDetail: React.FC<StudyDetailProps> = ({ studyId }) => {
             download
             className="rounded border border-ink-300 bg-transparent px-4 py-2 font-sans text-[15px] font-medium text-ink-900 transition-colors hover:bg-paper-2"
           >
-            Export Study ↓
+            Export Study
           </a>
         </div>
       </div>
