@@ -3,7 +3,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useStore } from '@/store';
-import { StudyConfig, ProfileField, AIBehavior, AIProviderType, LinkExpirationOption, GEMINI_SYNTHESIS_MODEL } from '@/types';
+import { StudyConfig, ProfileField, AIBehavior, AIProviderType, LinkExpirationOption, ProviderCommitment, GEMINI_SYNTHESIS_MODEL } from '@/types';
+import { DEFAULT_PROVIDER_COMMITMENT } from '@/lib/providerCommitment';
 import { saveStudy } from '@/services/storageService';
 import {
   IDEMPOTENCY_KEY_CONSUMED,
@@ -169,6 +170,9 @@ const StudySetup: React.FC = () => {
   );
   const [aiModel, setAiModel] = useState<string>(
     studyConfig?.aiModel || DEFAULT_MODEL_BY_PROVIDER[studyConfig?.aiProvider || 'gemini']
+  );
+  const [aiProviderCommitment, setAiProviderCommitment] = useState<ProviderCommitment>(
+    studyConfig?.aiProviderCommitment ?? DEFAULT_PROVIDER_COMMITMENT
   );
   const [enableReasoning, setEnableReasoning] = useState<boolean | undefined>(
     studyConfig?.enableReasoning
@@ -450,6 +454,7 @@ const StudySetup: React.FC = () => {
       setAiProvider(provider);
       setAiModel(studyConfig.aiModel || DEFAULT_MODEL_BY_PROVIDER[provider]);
       setAiSynthesisModel(studyConfig.aiSynthesisModel || GEMINI_SYNTHESIS_MODEL);
+      setAiProviderCommitment(studyConfig.aiProviderCommitment ?? DEFAULT_PROVIDER_COMMITMENT);
       setEnableReasoning(studyConfig.enableReasoning);
       setLinkExpiration(studyConfig.linkExpiration || 'never');
       setConsentText(studyConfig.consentText);
@@ -535,6 +540,7 @@ const StudySetup: React.FC = () => {
     aiBehavior,
     aiProvider,
     aiModel,
+    aiProviderCommitment,
     aiSynthesisModel: aiProvider === 'gemini' ? aiSynthesisModel : undefined,
     enableReasoning: aiProvider === 'gemini' ? enableReasoning : undefined,
     linkExpiration,
@@ -1372,6 +1378,38 @@ const StudySetup: React.FC = () => {
                 )}
               </div>
             )}
+            <fieldset className="space-y-2">
+              <legend className="font-sans text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500">
+                What participants are told
+              </legend>
+              {([
+                { id: 'fixed' as const, label: 'Only this provider and model', desc: 'The consent notice names this provider and model. Interviews can be re-analyzed only with them; after a switch, set the study back to analyze earlier interviews.' },
+                { id: 'may-change' as const, label: 'The provider or model may change', desc: 'The consent notice names this provider and says you may later analyze responses with a different provider or model.' },
+              ] satisfies Array<{ id: ProviderCommitment; label: string; desc: string }>).map((option) => {
+                const selected = aiProviderCommitment === option.id;
+                return (
+                  <label
+                    key={option.id}
+                    className={cn(
+                      'flex cursor-pointer items-start gap-3 border-l-2 py-3 pl-4',
+                      selected ? 'border-l-action bg-paper-2' : 'border-l-transparent hover:bg-paper-2/50'
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name="aiProviderCommitment"
+                      checked={selected}
+                      onChange={() => { setAiProviderCommitment(option.id); setIsDirty(true); }}
+                      className="mt-1 accent-action"
+                    />
+                    <div>
+                      <div className="font-sans text-[15px] font-medium text-ink-900">{option.label}</div>
+                      <div className="font-sans text-[13px] text-ink-500">{option.desc}</div>
+                    </div>
+                  </label>
+                );
+              })}
+            </fieldset>
           </section>
           <Rule />
 

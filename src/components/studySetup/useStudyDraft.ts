@@ -6,15 +6,18 @@ import {
   AIProviderType,
   LinkExpirationOption,
   ProfileField,
+  ProviderCommitment,
   StudyConfig,
 } from '@/types';
 import { DEFAULT_MODEL_BY_PROVIDER } from '@/lib/providerRegistry';
+import { DEFAULT_PROVIDER_COMMITMENT } from '@/lib/providerCommitment';
 import { defaultConsentText } from '@/lib/consentText';
 
 export interface StudyDraft {
   name: string; description: string; researchQuestion: string;
   coreQuestions: string[]; topicAreas: string[]; profileSchema: ProfileField[];
   aiBehavior: AIBehavior; aiProvider: AIProviderType; aiModel: string;
+  aiProviderCommitment: ProviderCommitment;
   enableReasoning: boolean | undefined; linkExpiration: LinkExpirationOption;
   consentText: string; researcherContact: string; thankYouText: string;
   interviewerInstructions: string;
@@ -29,6 +32,7 @@ export interface StudyDraft {
   setResearcherContact(value: string): void;
   selectProvider(id: AIProviderType): void;  // provider + DEFAULT_MODEL_BY_PROVIDER reset
   setAiModel(value: string): void;
+  setAiProviderCommitment(value: ProviderCommitment): void;
   setAiBehavior(value: AIBehavior): void;
   setEnableReasoning(value: boolean | undefined): void;
   setLinkExpiration(value: LinkExpirationOption): void;
@@ -74,6 +78,9 @@ export function useStudyDraft(studyConfig: StudyConfig | null): StudyDraft {
   const [aiModel, setAiModelState] = useState<string>(
     studyConfig?.aiModel || DEFAULT_MODEL_BY_PROVIDER[studyConfig?.aiProvider || 'gemini']
   );
+  const [aiProviderCommitment, setAiProviderCommitmentState] = useState<ProviderCommitment>(
+    studyConfig?.aiProviderCommitment ?? DEFAULT_PROVIDER_COMMITMENT
+  );
   const [enableReasoning, setEnableReasoningState] = useState<boolean | undefined>(
     studyConfig?.enableReasoning
   );
@@ -101,6 +108,7 @@ export function useStudyDraft(studyConfig: StudyConfig | null): StudyDraft {
     setIsDirty(true);
   };
   const setAiModel = (value: string) => { setAiModelState(value); setIsDirty(true); };
+  const setAiProviderCommitment = (value: ProviderCommitment) => { setAiProviderCommitmentState(value); setIsDirty(true); };
   const setAiBehavior = (value: AIBehavior) => { setAiBehaviorState(value); setIsDirty(true); };
   const setEnableReasoning = (value: boolean | undefined) => { setEnableReasoningState(value); setIsDirty(true); };
   const setLinkExpiration = (value: LinkExpirationOption) => { setLinkExpirationState(value); setIsDirty(true); };
@@ -190,6 +198,7 @@ export function useStudyDraft(studyConfig: StudyConfig | null): StudyDraft {
     } else if (config.aiModel) {
       setAiModelState(config.aiModel);
     }
+    if (config.aiProviderCommitment) setAiProviderCommitmentState(config.aiProviderCommitment);
     if (config.enableReasoning !== undefined) setEnableReasoningState(config.enableReasoning);
     if (config.linkExpiration) setLinkExpirationState(config.linkExpiration);
     if (config.consentText) setConsentTextState(config.consentText);
@@ -209,6 +218,7 @@ export function useStudyDraft(studyConfig: StudyConfig | null): StudyDraft {
     const provider = config.aiProvider || 'gemini';
     setAiProvider(provider);
     setAiModelState(config.aiModel || DEFAULT_MODEL_BY_PROVIDER[provider]);
+    setAiProviderCommitmentState(config.aiProviderCommitment ?? DEFAULT_PROVIDER_COMMITMENT);
     setEnableReasoningState(config.enableReasoning);
     setLinkExpirationState(config.linkExpiration || 'never');
     setConsentTextState(config.consentText);
@@ -228,6 +238,7 @@ export function useStudyDraft(studyConfig: StudyConfig | null): StudyDraft {
     aiBehavior,
     aiProvider,
     aiModel,
+    aiProviderCommitment,
     enableReasoning: aiProvider === 'gemini' ? enableReasoning : undefined,
     linkExpiration,
     linksEnabled: studyConfig?.linksEnabled ?? true,
@@ -251,7 +262,7 @@ export function useStudyDraft(studyConfig: StudyConfig | null): StudyDraft {
   return {
     name, description, researchQuestion,
     coreQuestions, topicAreas, profileSchema,
-    aiBehavior, aiProvider, aiModel,
+    aiBehavior, aiProvider, aiModel, aiProviderCommitment,
     enableReasoning, linkExpiration,
     consentText, researcherContact, thankYouText,
     interviewerInstructions,
@@ -259,7 +270,7 @@ export function useStudyDraft(studyConfig: StudyConfig | null): StudyDraft {
     savedStudyId, parentStudyInfo, isDirty,
 
     setName, setDescription, setResearchQuestion, setResearcherContact,
-    selectProvider, setAiModel, setAiBehavior, setEnableReasoning, setLinkExpiration, setConsentText,
+    selectProvider, setAiModel, setAiProviderCommitment, setAiBehavior, setEnableReasoning, setLinkExpiration, setConsentText,
     setThankYouText,
     setInterviewerInstructions,
     addQuestion, removeQuestion, updateQuestion,

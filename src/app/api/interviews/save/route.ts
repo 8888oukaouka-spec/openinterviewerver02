@@ -205,6 +205,10 @@ export async function POST(request: Request) {
       ...(canonical.study.config.interviewerInstructions !== undefined
         ? { conductedWithInstructions: canonical.study.config.interviewerInstructions }
         : {}),
+      // What the consent notice promised about the provider, at this revision.
+      ...(canonical.study.config.aiProviderCommitment !== undefined
+        ? { providerCommitment: canonical.study.config.aiProviderCommitment }
+        : {}),
       analysis: { status: 'pending', attempts: 0, lastAttemptAt: now },
       participantLinkId: linkId,
     };
@@ -223,6 +227,10 @@ export async function POST(request: Request) {
       conductedByModel: canonical.study.config.aiModel,
       ...(canonical.study.config.interviewerInstructions !== undefined
         ? { conductedWithInstructions: canonical.study.config.interviewerInstructions }
+        : {}),
+      // Only when present, so a fingerprint without a commitment is unchanged.
+      ...(canonical.study.config.aiProviderCommitment !== undefined
+        ? { providerCommitment: canonical.study.config.aiProviderCommitment }
         : {}),
     });
 

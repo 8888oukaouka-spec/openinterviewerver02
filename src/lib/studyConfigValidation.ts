@@ -2,6 +2,7 @@ import {
   AIProviderType,
   StudyConfig,
 } from '@/types';
+import { isProviderCommitment } from './providerCommitment';
 import { readBoundedJsonObject } from './requestBody';
 import { isKnownProviderModel } from './providerRegistry';
 import { CONSENT_TEXT_PLACEHOLDER, CONSENT_TEXT_PLACEHOLDER_ERROR } from './consentText';
@@ -53,6 +54,7 @@ const STUDY_CONFIG_FIELDS = new Set([
   'linksEnabled',
   'linkExpiration',
   'enableReasoning',
+  'aiProviderCommitment',
 ]);
 
 const PROFILE_FIELD_FIELDS = new Set([
@@ -225,6 +227,9 @@ export function validateStudyConfig(value: unknown): ValidationResult {
   }
   if (value.enableReasoning !== undefined && typeof value.enableReasoning !== 'boolean') {
     return { ok: false, error: 'Invalid AI reasoning setting' };
+  }
+  if (value.aiProviderCommitment !== undefined && !isProviderCommitment(value.aiProviderCommitment)) {
+    return { ok: false, error: 'Invalid AI provider commitment' };
   }
   if (value.aiSynthesisModel !== undefined
     && !isBoundedString(value.aiSynthesisModel, MAX_MODEL_LENGTH, true)) {

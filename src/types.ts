@@ -1,5 +1,7 @@
 // OpenInterviewer domain types
 
+export type ProviderCommitment = 'fixed' | 'may-change';
+
 // ============================================
 // Interview Phase & Progress Tracking
 // ============================================
@@ -130,6 +132,15 @@ export interface StudyConfig {
   aiProvider?: AIProviderType;
   aiModel?: string;
   aiSynthesisModel?: string;
+  /**
+   * What the consent notice promises about the AI provider (see
+   * lib/providerCommitment.ts). 'fixed': it names the provider and model and
+   * no later call may send a transcript to another. 'may-change': it says the
+   * researcher may later use a different provider or model. Absent (studies
+   * saved before this field): the notice names the provider only and nothing
+   * is enforced, as before.
+   */
+  aiProviderCommitment?: ProviderCommitment;
   consentText: string;
   /**
    * Optional. Shown to participants on their submission receipt so they can
@@ -321,6 +332,13 @@ export interface StoredInterview {
    */
   conductedByProvider?: AIProviderType;
   conductedByModel?: string;
+  /**
+   * The study's `aiProviderCommitment` at the revision the participant
+   * consented under, copied at save and never back-filled. With 'fixed', a
+   * later call may send this transcript only to `conductedByProvider` /
+   * `conductedByModel` (lib/providerCommitment.ts).
+   */
+  providerCommitment?: ProviderCommitment;
   /** Researcher instructions in force at save time; never back-filled. */
   conductedWithInstructions?: string;
 

@@ -67,6 +67,18 @@ const Consent: React.FC = () => {
   const selectedProviderId = studyConfig.aiProvider;
   const selectedProviderName = PROVIDER_OPTIONS.find(provider => provider.id === selectedProviderId)?.label;
   const providerConfigurationReady = Boolean(selectedProviderId && selectedProviderName && studyConfig.aiModel);
+  const selectedModelName = selectedProviderId && studyConfig.aiModel
+    ? PROVIDER_MODELS[selectedProviderId].find(model => model.id === studyConfig.aiModel)?.label ?? studyConfig.aiModel
+    : undefined;
+  const providerCommitmentNotice = !providerConfigurationReady
+    ? null
+    : studyConfig.aiProviderCommitment === 'fixed'
+    ? selectedProviderId === 'openrouter'
+      ? `The interview and any later analysis of your responses use ${selectedModelName} through OpenRouter; the study does not switch them to another AI service or model. OpenRouter may use a different ZDR-compatible upstream provider for each request.`
+      : `The interview and any later analysis of your responses use ${selectedModelName} (${selectedProviderName}); the study does not switch them to another AI provider or model.`
+    : studyConfig.aiProviderCommitment === 'may-change'
+    ? 'The researcher may later analyze your responses with a different AI provider or model.'
+    : null;
   const providerDisclosure = !providerConfigurationReady
     ? 'The researcher must review and save this study\'s AI provider settings before interviews can begin.'
     : aiTransport === 'gateway'
@@ -118,7 +130,10 @@ const Consent: React.FC = () => {
 
         <div className="rounded bg-paper-2 p-4 font-sans text-[13px] leading-5 text-ink-700">
           <strong className="text-ink-900">Data notice:</strong>{' '}
-          <span className="font-mono">{providerDisclosure}</span>{' '}
+          <span className="font-mono">
+            {providerDisclosure}
+            {providerCommitmentNotice ? <>{' '}{providerCommitmentNotice}</> : null}
+          </span>{' '}
           The researcher is the study&apos;s data controller and controls its storage and retention settings. Do
           not include information you do not want to share. Contact the researcher for retention, access, and
           deletion details.
