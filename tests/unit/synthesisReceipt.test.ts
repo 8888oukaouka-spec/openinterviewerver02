@@ -135,7 +135,7 @@ describe('synthesis receipts', () => {
   it('fails closed when signed provenance is not a supported provider/model pair', async () => {
     const receipt = await createSynthesisReceipt(payload);
     const invalidReceipt = await new jose.SignJWT({
-      ...jose.decodeJwt(receipt),
+      ...(jose.decodeJwt(receipt) as Record<string, unknown>),
       aiProvider: 'unsupported-provider',
     })
       .setProtectedHeader({ alg: 'HS256' })

@@ -9,9 +9,10 @@ import type { AITransport } from '@/lib/aiTransport';
 import { leaveLinkPage } from '@/lib/participantLinkHandover';
 import { participantLinkCode } from '@/lib/participantLinkPath';
 
-/** The exchange's transport; anything but the three known values (including none) is null. */
+/** The exchange's transport; anything but the two known values (including none) is null. */
 function participantTransport(value: unknown): AITransport | null {
-  return value === 'direct' || value === 'gateway' || value === 'cloudflare-gateway' ? value : null;
+  if (value === 'direct' || value === 'gateway') return value;
+  return null;
 }
 
 /**

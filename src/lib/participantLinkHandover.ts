@@ -23,7 +23,7 @@ import { RESEARCH_STORE_KEY, RESEARCH_STORE_VERSION } from '@/store';
 
 export const LEAVE_LINK_PAGE_FOR = '/consent';
 
-const KNOWN_TRANSPORTS: ReadonlySet<unknown> = new Set(['direct', 'gateway', 'cloudflare-gateway']);
+const KNOWN_TRANSPORTS: ReadonlySet<unknown> = new Set(['direct', 'gateway']);
 
 /**
  * Whether a document load will find this participant session in the persisted

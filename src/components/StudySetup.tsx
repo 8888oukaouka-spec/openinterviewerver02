@@ -949,8 +949,7 @@ const StudySetup: React.FC = () => {
 
       <fieldset
         className="min-w-0 border-0 p-0 lg:grid lg:grid-cols-[1fr_13rem] lg:items-start lg:gap-10"
-        disabled={!draftReady || isSaving}
-        inert={!draftReady}
+        disabled={isSaving}
         aria-busy={isSaving}
         onChangeCapture={(event) => { if (isSaving) event.stopPropagation(); }}
         onClickCapture={(event) => { if (isSaving) { event.preventDefault(); event.stopPropagation(); } }}
