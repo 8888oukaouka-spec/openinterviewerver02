@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useStore } from '@/store';
-import { PROVIDER_OPTIONS } from '@/lib/providerRegistry';
+import { PROVIDER_MODELS, PROVIDER_OPTIONS } from '@/lib/providerRegistry';
 import { buildParticipantOrPreviewHeaders } from '@/services/participantHeaders';
 import { Button, Disclosure, Label, Verbatim } from '@/components/ui';
 import NoSessionNotice from '@/components/NoSessionNotice';
