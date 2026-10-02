@@ -6,6 +6,7 @@ import { useStore } from '@/store';
 import { PROVIDER_OPTIONS } from '@/lib/providerRegistry';
 import { buildParticipantOrPreviewHeaders } from '@/services/participantHeaders';
 import { Button, Disclosure, Label, Verbatim } from '@/components/ui';
+import NoSessionNotice from '@/components/NoSessionNotice';
 
 const Consent: React.FC = () => {
   const router = useRouter();
@@ -61,13 +62,7 @@ const Consent: React.FC = () => {
     router.push('/setup');
   };
 
-  if (!studyConfig) {
-    return (
-      <div className="flex min-h-dvh items-center justify-center bg-paper-0">
-        <p className="text-ink-500">No study configured. Please set up a study first.</p>
-      </div>
-    );
-  }
+  if (!studyConfig) return <NoSessionNotice />;
 
   const selectedProviderId = studyConfig.aiProvider;
   const selectedProviderName = PROVIDER_OPTIONS.find(provider => provider.id === selectedProviderId)?.label;

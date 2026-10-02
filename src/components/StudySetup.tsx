@@ -947,7 +947,14 @@ const StudySetup: React.FC = () => {
         </div>
       )}
 
-      <div className="lg:grid lg:grid-cols-[1fr_13rem] lg:items-start lg:gap-10">
+      <fieldset
+        className="min-w-0 border-0 p-0 lg:grid lg:grid-cols-[1fr_13rem] lg:items-start lg:gap-10"
+        disabled={!draftReady || isSaving}
+        inert={!draftReady}
+        aria-busy={isSaving}
+        onChangeCapture={(event) => { if (isSaving) event.stopPropagation(); }}
+        onClickCapture={(event) => { if (isSaving) { event.preventDefault(); event.stopPropagation(); } }}
+      >
         <div className="space-y-12 border border-ink-300 bg-paper-1 p-5 md:p-8">
           {parentStudyInfo && (
             <div className="border-l-2 border-ink-500 bg-paper-2 px-4 py-3">
@@ -1511,7 +1518,7 @@ const StudySetup: React.FC = () => {
             ))}
           </ol>
         </nav>
-      </div>
+      </fieldset>
     </div>
   );
 };

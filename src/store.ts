@@ -17,6 +17,7 @@ import {
   ProfileField
 } from './types';
 import type { AITransport } from './lib/aiTransport';
+import { tolerantStorage } from './lib/tolerantSessionStorage';
 
 // Persistence status for the completed interview, shared between the
 // interview-completion screen and the synthesis screen so both reflect
@@ -168,6 +169,11 @@ interface ResearchState {
   reset: () => void;
   resetParticipant: () => void;
 }
+
+/** The sessionStorage key of the persisted store (src/lib/participantLinkHandover.ts reads it back). */
+export const RESEARCH_STORE_KEY = 'research-tool-storage';
+/** The persisted store's version; an entry with another one is migrated on load, not read as-is. */
+export const RESEARCH_STORE_VERSION = 6;
 
 export const useStore = create<ResearchState>()(
   persist(
@@ -374,9 +380,11 @@ export const useStore = create<ResearchState>()(
       }))
     }),
     {
-      name: 'research-tool-storage',
-      storage: createJSONStorage(() => sessionStorage),
-      version: 5,
+      name: RESEARCH_STORE_KEY,
+      // A write that fails (quota, storage disabled) leaves the store in
+      // memory only instead of throwing out of the update.
+      storage: createJSONStorage(() => tolerantStorage()),
+      version: RESEARCH_STORE_VERSION,
       migrate: (persistedState) => {
         if (!persistedState || typeof persistedState !== 'object') {
           return persistedState as ResearchState;

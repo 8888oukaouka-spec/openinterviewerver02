@@ -7,6 +7,7 @@ import { synthesizeInterview } from '@/services/interviewApi';
 import { saveCompletedInterview } from '@/services/storageService';
 import { Button, Citation, Coordinate, Label, Page, Rule, Verbatim } from '@/components/ui';
 import { resolveThemeEvidence } from '@/lib/evidence';
+import NoSessionNotice from '@/components/NoSessionNotice';
 
 const Synthesis: React.FC = () => {
   const router = useRouter();
@@ -149,13 +150,7 @@ const Synthesis: React.FC = () => {
     router.push('/export');
   };
 
-  if (!studyConfig) {
-    return (
-      <div className="flex min-h-dvh items-center justify-center bg-paper-0">
-        <p className="font-sans text-[15px] text-ink-500">No study configured.</p>
-      </div>
-    );
-  }
+  if (!studyConfig) return <NoSessionNotice />;
 
   if (viewMode === 'participant') {
     const participantState = analysisError
